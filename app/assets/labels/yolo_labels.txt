@@ -1,0 +1,8 @@
+person
+chair
+table
+door
+window
+wall
+floor
+obstacle

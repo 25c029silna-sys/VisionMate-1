@@ -1,0 +1,79 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:mocktail/mocktail.dart';
+import 'package:visionmate/core/voice/voice_service.dart';
+import 'package:visionmate/core/camera/camera_service.dart';
+import 'package:visionmate/core/permissions/permission_service.dart';
+import 'package:visionmate/features/ocr_reader/domain/ocr_service.dart';
+import 'package:visionmate/features/ocr_reader/presentation/ocr_screen.dart';
+
+class MockVoiceService extends Mock implements VoiceService {}
+class MockCameraService extends Mock implements CameraService {}
+class MockPermissionService extends Mock implements PermissionService {}
+class MockOcrService extends Mock implements OcrService {}
+
+void main() {
+  late MockVoiceService mockVoiceService;
+  late MockCameraService mockCameraService;
+  late MockPermissionService mockPermissionService;
+  late MockOcrService mockOcrService;
+
+  setUp(() {
+    mockVoiceService = MockVoiceService();
+    mockCameraService = MockCameraService();
+    mockPermissionService = MockPermissionService();
+    mockOcrService = MockOcrService();
+
+    when(() => mockVoiceService.speak(any())).thenAnswer((_) async {});
+    when(() => mockVoiceService.listen()).thenAnswer((_) async => null);
+    when(() => mockPermissionService.requestCameraPermission()).thenAnswer((_) async => true);
+  });
+
+  Widget buildTestableWidget() {
+    return MultiProvider(
+      providers: [
+        Provider<VoiceService>.value(value: mockVoiceService),
+      ],
+      child: MaterialApp(
+        home: OcrScreen(
+          ocrService: mockOcrService,
+          cameraService: mockCameraService,
+          permissionService: mockPermissionService,
+        ),
+      ),
+    );
+  }
+
+  testWidgets('OcrScreen renders title and scan button successfully', (widgetTester) async {
+    await widgetTester.pumpWidget(buildTestableWidget());
+    await widgetTester.pumpAndSettle();
+
+    expect(find.text('OCR Reader'), findsOneWidget);
+    expect(find.textContaining('Scan / Capture Document'), findsOneWidget);
+  });
+
+  testWidgets('OcrScreen handles camera permission denial gracefully without crash', (widgetTester) async {
+    when(() => mockPermissionService.requestCameraPermission()).thenAnswer((_) async => false);
+
+    await widgetTester.pumpWidget(buildTestableWidget());
+    await widgetTester.pumpAndSettle();
+
+    verify(() => mockVoiceService.speak('Camera permission denied. Returning to main menu.')).called(1);
+  });
+
+  testWidgets('OcrScreen handles extraction failure gracefully with TTS error alert', (widgetTester) async {
+    when(() => mockOcrService.recognizeTextFromImage(any()))
+        .thenAnswer((_) async => 'EXTRACTION_ERROR');
+
+    await widgetTester.pumpWidget(buildTestableWidget());
+    await widgetTester.pumpAndSettle();
+
+    final scanButton = find.textContaining('Scan / Capture Document');
+    await widgetTester.tap(scanButton);
+    await widgetTester.pumpAndSettle();
+
+    expect(find.text('Something went wrong reading that text, please try again.'), findsOneWidget);
+    verify(() => mockVoiceService.speak('Something went wrong reading that text, please try again.')).called(1);
+  });
+}

@@ -1,0 +1,34 @@
+# Flutter/Dart
+**/build/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Pods/
+**/ios/Runner.xcworkspace/
+**/.dart_tool/
+**/.pub-cache/
+**/pubspec.lock
+**/packages/
+**/flutter_*.png
+**/android/.gradle/
+**/android/app/build/
+**/app/.packages
+.idea/
+.vscode/
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+.venv/
+venv/
+
+# Model artifacts
+**/*.tflite
+**/*.onnx
+**/*.h5
+
+# Generated docs
+docs/**/jupyter_checkpoints/

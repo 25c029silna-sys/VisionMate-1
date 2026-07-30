@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <capability android:name="actions.intent.OPEN_APP_FEATURE">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.visionmate.visionmate"
+            android:targetClass="com.visionmate.visionmate.MainActivity">
+            <parameter
+                android:name="feature"
+                android:key="feature"/>
+        </intent>
+    </capability>
+
+    <shortcut
+        android:shortcutId="open_visionmate"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/app_name"
+        android:shortcutLongLabel="@string/shortcut_open_visionmate">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.visionmate.visionmate"
+            android:targetClass="com.visionmate.visionmate.MainActivity" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE" />
+    </shortcut>
+</shortcuts>
