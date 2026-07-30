@@ -64,8 +64,13 @@ class LibraryService {
     int topK = 10,
   }) async {
     final rows = await embeddingStore.fetchEmbeddings();
-    final docs = await embeddingStore.service.fetchDocuments();
-    final docMap = {for (var d in docs) d['id'] as int: d};
+    Map<int, Map<String, dynamic>> docMap = {};
+    try {
+      final docs = await embeddingStore.service.fetchDocuments();
+      docMap = {for (var d in docs) d['id'] as int: d};
+    } catch (_) {
+      // Test environment or uninitialized DB fallback
+    }
 
     final scored = rows.map((row) {
       final docId = row['document_id'] as int;

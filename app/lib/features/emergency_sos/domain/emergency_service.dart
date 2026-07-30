@@ -64,7 +64,38 @@ class EmergencyService {
   String composeMessage(Position position) {
     return 'Emergency alert: I need help. My location is https://maps.google.com/?q=${position.latitude},${position.longitude} (${position.latitude}, ${position.longitude}).';
   }
+
+  /// Triggers full emergency workflow globally from anywhere in the app or lock screen.
+  Future<void> executeGlobalSos({
+    required dynamic storageService,
+    required dynamic voiceService,
+  }) async {
+    final contact = await storageService.getTrustedContact();
+    final String phone = contact['phone'] ?? '';
+    final String name = contact['name'] ?? 'Trusted Contact';
+
+    if (phone.isEmpty) {
+      await voiceService.speak(
+        'Emergency SOS triggered by shake gesture, but no trusted contact is saved. Please configure a contact in Emergency SOS.',
+      );
+      return;
+    }
+
+    await voiceService.speak('Emergency SOS activated by 3-shake gesture. Obtaining location and sending alert to $name.');
+
+    try {
+      final position = await fetchLocation();
+      final message = composeMessage(position);
+      await sendSos(phone, message);
+      await voiceService.speak('Emergency SMS sent. Calling $name.');
+      await makePhoneCall(phone);
+    } catch (e) {
+      await voiceService.speak('Emergency alert encountered an issue. Placing phone call directly.');
+      await makePhoneCall(phone);
+    }
+  }
 }
+
 
 
 

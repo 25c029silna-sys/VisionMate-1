@@ -5,14 +5,11 @@ import 'package:speech_to_text/speech_to_text.dart';
 class VoiceService {
   final FlutterTts _tts = FlutterTts();
   final SpeechToText _speech = SpeechToText();
-  bool _isContinuous = false;
   bool _isSpeaking = false;
   bool _isListening = false;
-  Function(String)? _onCommandReceived;
 
   bool get isSpeaking => _isSpeaking;
   bool get isListening => _isListening;
-  bool get isContinuous => _isContinuous;
 
   VoiceService() {
     _tts.setSpeechRate(0.4);
@@ -22,9 +19,6 @@ class VoiceService {
     });
     _tts.setCompletionHandler(() {
       _isSpeaking = false;
-      if (_isContinuous && !_isListening) {
-        _restartListeningLoop();
-      }
     });
     _tts.setErrorHandler((_) {
       _isSpeaking = false;
@@ -77,34 +71,12 @@ class VoiceService {
     return completer.future;
   }
 
-  /// Starts complete continuous voice activation for the duration of app use.
-  void startContinuousListening(Function(String) onCommand) {
-    _isContinuous = true;
-    _onCommandReceived = onCommand;
-    _restartListeningLoop();
-  }
-
-  /// Stops continuous voice listening loop.
-  void stopContinuousListening() {
-    _isContinuous = false;
-    _onCommandReceived = null;
-    _speech.stop();
-    _isListening = false;
-  }
-
-  Future<void> _restartListeningLoop() async {
-    if (!_isContinuous || _isSpeaking || _isListening) return;
-
-    final command = await listen(listenDurationSeconds: 6);
-    if (_isContinuous && command != null && command.trim().isNotEmpty) {
-      _onCommandReceived?.call(command.trim());
-    }
-
-    // Loop again if continuous mode is still enabled
-    if (_isContinuous && !_isSpeaking) {
-      await Future.delayed(const Duration(milliseconds: 300));
-      _restartListeningLoop();
+  Future<void> stopListening() async {
+    if (_isListening) {
+      await _speech.stop();
+      _isListening = false;
     }
   }
 }
+
 

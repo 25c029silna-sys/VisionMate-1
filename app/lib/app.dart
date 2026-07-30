@@ -4,12 +4,15 @@ import 'core/voice/voice_service.dart';
 import 'core/voice/command_router.dart';
 import 'core/voice/voice_guide_service.dart';
 import 'core/storage/storage_service.dart';
+import 'core/sensors/shake_detector_service.dart';
 import 'features/braille/presentation/braille_screen.dart';
 import 'features/digital_library/presentation/library_screen.dart';
 import 'features/ocr_reader/presentation/ocr_screen.dart';
 import 'features/scene_navigation/presentation/scene_screen.dart';
 import 'features/emergency_sos/presentation/emergency_screen.dart';
+import 'features/emergency_sos/domain/emergency_service.dart';
 import 'widgets/feature_card.dart';
+import 'widgets/voice_button.dart';
 import 'widgets/voice_command_guide.dart';
 
 class VisionMateApp extends StatelessWidget {
@@ -23,27 +26,71 @@ class VisionMateApp extends StatelessWidget {
         Provider<CommandRouter>(create: (_) => CommandRouter()),
         Provider<StorageService>(create: (_) => StorageService()),
       ],
-      child: MaterialApp(
-        title: 'VisionMate',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData.dark().copyWith(
-          scaffoldBackgroundColor: const Color(0xFF0D1117),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFF161B22),
-            elevation: 0,
-          ),
-        ),
-        initialRoute: '/',
-        routes: {
-          '/': (_) => const HomeScreen(),
-          '/braille': (_) => const BrailleScreen(),
-          '/library': (_) => const LibraryScreen(),
-          '/ocr': (_) => const OcrScreen(),
-          '/scene': (_) => const SceneScreen(),
-          '/emergency': (_) => const EmergencyScreen(),
+      child: Builder(
+        builder: (context) {
+          return GlobalShakeWrapper(
+            child: MaterialApp(
+              title: 'VisionMate',
+              debugShowCheckedModeBanner: false,
+              theme: ThemeData.dark().copyWith(
+                scaffoldBackgroundColor: const Color(0xFF0D1117),
+                appBarTheme: const AppBarTheme(
+                  backgroundColor: Color(0xFF161B22),
+                  elevation: 0,
+                ),
+              ),
+              initialRoute: '/',
+              routes: {
+                '/': (_) => const HomeScreen(),
+                '/braille': (_) => const BrailleScreen(),
+                '/library': (_) => const LibraryScreen(),
+                '/ocr': (_) => const OcrScreen(),
+                '/scene': (_) => const SceneScreen(),
+                '/emergency': (_) => const EmergencyScreen(),
+              },
+            ),
+          );
         },
       ),
     );
+  }
+}
+
+class GlobalShakeWrapper extends StatefulWidget {
+  final Widget child;
+  const GlobalShakeWrapper({super.key, required this.child});
+
+  @override
+  State<GlobalShakeWrapper> createState() => _GlobalShakeWrapperState();
+}
+
+class _GlobalShakeWrapperState extends State<GlobalShakeWrapper> {
+  final ShakeDetectorService _shakeDetector = ShakeDetectorService();
+
+  @override
+  void initState() {
+    super.initState();
+    _shakeDetector.startListening(() async {
+      if (!mounted) return;
+      final voiceService = Provider.of<VoiceService>(context, listen: false);
+      final storageService = Provider.of<StorageService>(context, listen: false);
+      final emergencyService = EmergencyService();
+      await emergencyService.executeGlobalSos(
+        storageService: storageService,
+        voiceService: voiceService,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _shakeDetector.stopListening();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return widget.child;
   }
 }
 
@@ -57,7 +104,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late final VoiceService voiceService;
   late final CommandRouter router;
-  String status = 'Continuous voice activation active...';
+  String status = 'Tap the Voice Button below to give a command, or shake 3 times for SOS.';
   bool isListening = false;
 
   @override
@@ -66,57 +113,63 @@ class _HomeScreenState extends State<HomeScreen> {
     voiceService = Provider.of<VoiceService>(context, listen: false);
     router = Provider.of<CommandRouter>(context, listen: false);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await voiceService.speak('Welcome to VisionMate. Continuous voice activation is active.');
-      _startVoiceActivation();
+      await voiceService.speak(
+        'Welcome to VisionMate. Tap the voice button to give a command, or shake device 3 times for Emergency SOS.',
+      );
     });
   }
 
-  void _startVoiceActivation() {
+  Future<void> _activateVoiceRecognition() async {
+    if (isListening) {
+      await voiceService.stopListening();
+      setState(() {
+        isListening = false;
+        status = 'Voice listening canceled.';
+      });
+      return;
+    }
+
     setState(() {
       isListening = true;
-      status = 'Continuous voice activation active... Speak a command anytime.';
+      status = 'Listening for voice command... Speak now.';
     });
-    voiceService.startContinuousListening((command) async {
-      if (!mounted) return;
+
+    await voiceService.speak('Listening. State your command.');
+    final command = await voiceService.listen(listenDurationSeconds: 5);
+
+    if (!mounted) return;
+
+    setState(() {
+      isListening = false;
+    });
+
+    if (command != null && command.trim().isNotEmpty) {
+      final text = command.trim();
       setState(() {
-        status = 'Heard: "$command"';
+        status = 'Heard: "$text"';
       });
 
-      final route = router.routeForCommand(command);
+      final route = router.routeForCommand(text);
       if (route != null) {
         if (route == '/guide') {
           VoiceCommandGuideModal.show(context);
           await VoiceGuideService(voiceService).readGuideAloud();
         } else {
-          await voiceService.speak('Opening $route.');
+          await voiceService.speak('Opening module.');
           if (mounted) {
             Navigator.pushNamed(context, route);
           }
         }
       } else {
-        await voiceService.speak('Command not recognized. Say Guide or Help for commands.');
+        await voiceService.speak('Command not recognized. Tap the voice button to try again or say Guide for commands.');
       }
-    });
-  }
-
-  @override
-  void dispose() {
-    voiceService.stopContinuousListening();
-    super.dispose();
-  }
-
-  Future<void> _listen() async {
-    if (!voiceService.isContinuous) {
-      _startVoiceActivation();
     } else {
-      voiceService.stopContinuousListening();
       setState(() {
-        isListening = false;
-        status = 'Voice activation paused. Tap mic to resume.';
+        status = 'No voice input detected. Tap button to try again.';
       });
+      await voiceService.speak('No command heard. Tap the button to speak again.');
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -151,82 +204,48 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Top Status & Speech Visualizer HUD
+            // Top Status & Main Push-To-Talk Button Container
             Container(
               margin: const EdgeInsets.all(16),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: const Color(0xFF161B22),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: isListening ? Colors.blueAccent : Colors.white12,
-                  width: isListening ? 2 : 1,
-                ),
-                boxShadow: isListening
-                    ? [
-                        BoxShadow(
-                          color: Colors.blueAccent.withAlpha((0.3 * 255).round()),
-                          blurRadius: 16,
-                          spreadRadius: 2,
-                        )
-                      ]
-                    : [],
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white12),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  GestureDetector(
-                    onTap: _listen,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 300),
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: isListening ? Colors.blueAccent : Colors.white10,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        isListening ? Icons.mic : Icons.mic_none,
-                        color: isListening ? Colors.white : Colors.blueAccent,
-                        size: 26,
-                      ),
-                    ),
+                  VoiceButton(
+                    label: 'TAP TO ACTIVATE VOICE',
+                    isListening: isListening,
+                    onPressed: _activateVoiceRecognition,
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0D1117),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
                       children: [
-                        Row(
-                          children: [
-                            Text(
-                              isListening ? 'VOICE LISTENING' : 'VOICE ASSISTANT',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: isListening ? Colors.blueAccent : Colors.white38,
-                                letterSpacing: 0.8,
-                              ),
-                            ),
-                            const Spacer(),
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: isListening ? Colors.greenAccent : Colors.white38,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ],
+                        Icon(
+                          isListening ? Icons.graphic_eq_rounded : Icons.info_outline_rounded,
+                          size: 18,
+                          color: isListening ? Colors.blueAccent : Colors.white54,
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          status,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isListening ? Colors.white : Colors.white70,
+                              fontWeight: isListening ? FontWeight.bold : FontWeight.normal,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -235,13 +254,13 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-            // Section Label for Sighted / Dual-Use Navigation
+            // Section Header
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4),
               child: Row(
                 children: [
                   const Text(
-                    'TOUCH & VOICE MODULES',
+                    'MODULES & EMERGENCY',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
@@ -254,7 +273,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: () => VoiceCommandGuideModal.show(context),
                     icon: const Icon(Icons.info_outline, size: 14, color: Colors.blueAccent),
                     label: const Text(
-                      'Voice Commands',
+                      'Voice Guide',
                       style: TextStyle(fontSize: 12, color: Colors.blueAccent),
                     ),
                   ),
@@ -262,7 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-            // Scrollable Feature Cards Grid for Non-Blind / Sighted Users
+            // Feature Cards Grid
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -273,7 +292,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: Icons.document_scanner_rounded,
                     primaryColor: Colors.blueAccent,
                     secondaryColor: Colors.cyan,
-                    badgeText: 'Say "OCR"',
+                    badgeText: 'Tap or Voice',
                     onTap: () => Navigator.pushNamed(context, '/ocr'),
                   ),
                   const SizedBox(height: 12),
@@ -283,7 +302,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: Icons.remove_red_eye_rounded,
                     primaryColor: Colors.tealAccent,
                     secondaryColor: Colors.green,
-                    badgeText: 'Say "Scene"',
+                    badgeText: 'Tap or Voice',
                     onTap: () => Navigator.pushNamed(context, '/scene'),
                   ),
                   const SizedBox(height: 12),
@@ -293,7 +312,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: Icons.grid_on_rounded,
                     primaryColor: Colors.amberAccent,
                     secondaryColor: Colors.orange,
-                    badgeText: 'Say "Braille"',
+                    badgeText: 'Tap or Voice',
                     onTap: () => Navigator.pushNamed(context, '/braille'),
                   ),
                   const SizedBox(height: 12),
@@ -303,17 +322,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: Icons.menu_book_rounded,
                     primaryColor: Colors.purpleAccent,
                     secondaryColor: Colors.deepPurple,
-                    badgeText: 'Say "Library"',
+                    badgeText: 'Tap or Voice',
                     onTap: () => Navigator.pushNamed(context, '/library'),
                   ),
                   const SizedBox(height: 12),
                   FeatureCard(
                     title: 'Emergency SOS',
-                    description: 'Instant danger alert with GPS location to emergency contacts.',
+                    description: 'Instant danger alert with GPS location to emergency contacts (or Shake 3 Times).',
                     icon: Icons.warning_amber_rounded,
                     primaryColor: Colors.redAccent,
                     secondaryColor: Colors.deepOrange,
-                    badgeText: 'Say "SOS"',
+                    badgeText: 'Shake 3x or Tap',
                     onTap: () => Navigator.pushNamed(context, '/emergency'),
                   ),
                   const SizedBox(height: 16),
@@ -321,7 +340,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-            // Bottom Quick Control Action Bar
+            // Bottom Emergency SOS Quick Access Banner
             Container(
               padding: const EdgeInsets.all(16),
               decoration: const BoxDecoration(
@@ -334,33 +353,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: _listen,
-                      icon: Icon(
-                        isListening ? Icons.mic : Icons.mic_none,
-                        color: Colors.white,
+                      onPressed: () => Navigator.pushNamed(context, '/emergency'),
+                      icon: const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
+                      label: const Text(
+                        'EMERGENCY SOS (OR SHAKE DEVICE 3x)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       ),
-                      label: Text(isListening ? 'Listening...' : 'Tap to Speak'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueAccent,
+                        backgroundColor: Colors.redAccent,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton.icon(
-                    onPressed: () => Navigator.pushNamed(context, '/emergency'),
-                    icon: const Icon(Icons.warning_amber_rounded, color: Colors.white),
-                    label: const Text('SOS'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.redAccent,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
                       ),
                     ),
                   ),

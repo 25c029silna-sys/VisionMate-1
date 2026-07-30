@@ -2,14 +2,15 @@ class CommandRouter {
   /// Intent keyword maps ordered by deterministic tie-breaking priority:
   /// Emergency > Guide > Braille > OCR > Scene > Library > Home
   static const Map<String, List<String>> _intentKeywords = {
-    '/emergency': ['emergency', 'sos', 'panic', 'help me', 'danger', 'distress'],
-    '/guide': ['guide', 'help', 'commands', 'list commands', 'what can i say', 'voice guide', 'talkback'],
+    '/emergency': ['emergency', 'sos', 'panic', 'help', 'danger', 'distress'],
+    '/guide': ['guide', 'voice guide', 'commands', 'list commands', 'what can i say', 'talkback'],
     '/braille': ['braille', 'brail', 'tactile'],
     '/ocr': ['ocr', 'read text', 'read document', 'read page', 'scan text', 'text reader', 'read', 'scan', 'capture'],
     '/scene': ['scene', 'surroundings', 'navigate', 'navigation', 'obstacle', 'environment', 'describe'],
     '/library': ['library', 'smart library', 'digital library', 'semantic search', 'document search', 'search', 'find document'],
     '/': ['home', 'go home', 'main screen', 'back to main'],
   };
+
 
   /// Normalizes input text by lowercasing and stripping special punctuation.
   String _normalize(String text) {
