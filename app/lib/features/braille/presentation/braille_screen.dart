@@ -20,6 +20,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
   String result = 'Position camera over Braille page and tap Scan Braille.';
   bool isScanning = false;
   bool isCameraReady = false;
+  bool isExportingPdf = false;
 
   @override
   void initState() {
@@ -78,6 +79,41 @@ class _BrailleScreenState extends State<BrailleScreen> {
     await voiceService.speak('Braille recognition complete. Recognized text: $extracted');
   }
 
+  Future<void> _exportToPdf() async {
+    if (result.trim().isEmpty || result.contains('Position camera') || result.contains('Processing')) {
+      await voiceService.speak('No recognized Braille text available to export.');
+      return;
+    }
+
+    setState(() {
+      isExportingPdf = true;
+    });
+
+    try {
+      final pdfFile = await brailleService.exportBrailleTextToPdf(result);
+      if (!mounted) return;
+
+      setState(() {
+        isExportingPdf = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('PDF saved successfully to ${pdfFile.path}'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      await voiceService.speak('Braille text successfully converted and saved as PDF document.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        isExportingPdf = false;
+      });
+      await voiceService.speak('Failed to export PDF file.');
+    }
+  }
+
   @override
   void dispose() {
     cameraService.dispose();
@@ -87,6 +123,11 @@ class _BrailleScreenState extends State<BrailleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasRecognizedText = result.isNotEmpty &&
+        !result.contains('Position camera') &&
+        !result.contains('Processing') &&
+        !result.contains('isn\'t available');
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Braille Page Recognition'),
@@ -145,7 +186,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
                   children: [
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(16.0),
+                      padding: const EdgeInsets.all(14.0),
                       decoration: BoxDecoration(
                         color: Colors.grey.shade900,
                         borderRadius: BorderRadius.circular(12),
@@ -153,7 +194,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
                       child: SelectableText(
                         result,
                         style: const TextStyle(
-                          fontSize: 18,
+                          fontSize: 16,
                           fontWeight: FontWeight.w500,
                           color: Colors.white,
                         ),
@@ -161,28 +202,57 @@ class _BrailleScreenState extends State<BrailleScreen> {
                       ),
                     ),
                     const Spacer(),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: ElevatedButton.icon(
-                        onPressed: isScanning ? null : _scanBraille,
-                        icon: isScanning
-                            ? const SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(Icons.camera_alt, size: 28),
-                        label: Text(
-                          isScanning ? 'Processing...' : 'Scan Braille Page',
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 54,
+                            child: ElevatedButton.icon(
+                              onPressed: isScanning ? null : _scanBraille,
+                              icon: isScanning
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.camera_alt, size: 24),
+                              label: Text(
+                                isScanning ? 'Processing...' : 'Scan Braille',
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                        if (hasRecognizedText) ...[
+                          const SizedBox(width: 12),
+                          SizedBox(
+                            height: 54,
+                            child: ElevatedButton.icon(
+                              onPressed: isExportingPdf ? null : _exportToPdf,
+                              icon: isExportingPdf
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.picture_as_pdf, size: 24),
+                              label: const Text('PDF', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.deepOrangeAccent,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 12),
                   ],
@@ -195,4 +265,3 @@ class _BrailleScreenState extends State<BrailleScreen> {
     );
   }
 }
-

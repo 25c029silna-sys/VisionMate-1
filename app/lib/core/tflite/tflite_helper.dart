@@ -6,6 +6,7 @@ class TfliteHelper {
   bool _isModelAvailable = false;
 
   bool get isModelAvailable => _isModelAvailable;
+  Interpreter? get interpreter => _interpreter;
 
   Future<Interpreter?> loadModel(String assetPath) async {
     try {
@@ -26,4 +27,3 @@ class TfliteHelper {
     _isModelAvailable = false;
   }
 }
-

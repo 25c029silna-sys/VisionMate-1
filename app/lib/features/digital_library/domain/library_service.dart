@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
+import '../../../core/pdf/pdf_service.dart';
 import '../../../core/tflite/tflite_helper.dart';
 import '../data/embedding_store.dart';
 import 'minilm_embedder.dart';
@@ -8,6 +10,7 @@ class LibraryService {
   final EmbeddingStore embeddingStore;
   final TfliteHelper _tfliteHelper = TfliteHelper();
   final MiniLmEmbedder embedder = MiniLmEmbedder();
+  final PdfService pdfService = PdfService();
   bool _isModelAvailable = false;
 
   bool get isModelAvailable => _isModelAvailable;
@@ -47,6 +50,17 @@ class LibraryService {
     final vector = embedder.generateEmbedding('$title $text');
     await embeddingStore.saveEmbedding(docId, vector);
     return docId;
+  }
+
+  /// Imports a PDF file, extracts all page text, saves to SQLite database, and computes vector embeddings.
+  Future<int> importAndIndexPdf(File pdfFile) async {
+    final fileName = pdfFile.path.split(Platform.pathSeparator).last;
+    final title = fileName.replaceAll('.pdf', '').replaceAll('_', ' ');
+    
+    final extractedText = await pdfService.extractTextFromPdf(pdfFile);
+    final textToIndex = extractedText.isNotEmpty ? extractedText : 'PDF Document containing no extractable text layer.';
+    
+    return await addAndIndexDocument(title, textToIndex, sourceType: 'pdf_import');
   }
 
   /// Generates vector embedding and ranks documents for a spoken search query string.
@@ -93,5 +107,3 @@ class LibraryService {
     return scored.take(topK).toList();
   }
 }
-
-

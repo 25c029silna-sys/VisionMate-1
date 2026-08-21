@@ -32,3 +32,23 @@ venv/
 
 # Generated docs
 docs/**/jupyter_checkpoints/
+
+# Braille training dataset
+ml/braille_cnn/data/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+.venv/
+
+# Environment/secrets
+.env
+
+# Flutter generated files
+app/.dart_tool/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies

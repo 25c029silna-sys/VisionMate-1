@@ -22,7 +22,7 @@ class VisionMateApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        Provider<VoiceService>(create: (_) => VoiceService()),
+        ChangeNotifierProvider<VoiceService>(create: (_) => VoiceService()),
         Provider<CommandRouter>(create: (_) => CommandRouter()),
         Provider<StorageService>(create: (_) => StorageService()),
       ],
@@ -198,182 +198,118 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Voice Commands Guide',
             onPressed: () => VoiceCommandGuideModal.show(context),
           ),
-          const SizedBox(width: 8),
         ],
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            // Top Status & Main Push-To-Talk Button Container
-            Container(
-              margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF161B22),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: Column(
-                children: [
-                  VoiceButton(
-                    label: 'TAP TO ACTIVATE VOICE',
-                    isListening: isListening,
-                    onPressed: _activateVoiceRecognition,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Voice Status Card
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16.0),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF161B22),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: isListening ? Colors.greenAccent : Colors.blueAccent.withAlpha((0.4 * 255).round()),
+                    width: 2,
                   ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0D1117),
-                      borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      isListening ? Icons.mic_rounded : Icons.info_outline_rounded,
+                      color: isListening ? Colors.greenAccent : Colors.blueAccent,
+                      size: 28,
                     ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          isListening ? Icons.graphic_eq_rounded : Icons.info_outline_rounded,
-                          size: 18,
-                          color: isListening ? Colors.blueAccent : Colors.white54,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            status,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: isListening ? Colors.white : Colors.white70,
-                              fontWeight: isListening ? FontWeight.bold : FontWeight.normal,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        status,
+                        style: const TextStyle(fontSize: 15, color: Colors.white),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Section Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4),
-              child: Row(
-                children: [
-                  const Text(
-                    'MODULES & EMERGENCY',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white38,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: () => VoiceCommandGuideModal.show(context),
-                    icon: const Icon(Icons.info_outline, size: 14, color: Colors.blueAccent),
-                    label: const Text(
-                      'Voice Guide',
-                      style: TextStyle(fontSize: 12, color: Colors.blueAccent),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Feature Cards Grid
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                children: [
-                  FeatureCard(
-                    title: 'OCR Text Reader',
-                    description: 'Scan and hear books, labels, signs, & printed documents.',
-                    icon: Icons.document_scanner_rounded,
-                    primaryColor: Colors.blueAccent,
-                    secondaryColor: Colors.cyan,
-                    badgeText: 'Tap or Voice',
-                    onTap: () => Navigator.pushNamed(context, '/ocr'),
-                  ),
-                  const SizedBox(height: 12),
-                  FeatureCard(
-                    title: 'Scene & Navigation',
-                    description: 'Real-time obstacle detection and surroundings description.',
-                    icon: Icons.remove_red_eye_rounded,
-                    primaryColor: Colors.tealAccent,
-                    secondaryColor: Colors.green,
-                    badgeText: 'Tap or Voice',
-                    onTap: () => Navigator.pushNamed(context, '/scene'),
-                  ),
-                  const SizedBox(height: 12),
-                  FeatureCard(
-                    title: 'Braille Recognition',
-                    description: 'Capture Braille dots and translate them to readable text.',
-                    icon: Icons.grid_on_rounded,
-                    primaryColor: Colors.amberAccent,
-                    secondaryColor: Colors.orange,
-                    badgeText: 'Tap or Voice',
-                    onTap: () => Navigator.pushNamed(context, '/braille'),
-                  ),
-                  const SizedBox(height: 12),
-                  FeatureCard(
-                    title: 'Digital Library',
-                    description: 'Semantic vector search across indexed documents & texts.',
-                    icon: Icons.menu_book_rounded,
-                    primaryColor: Colors.purpleAccent,
-                    secondaryColor: Colors.deepPurple,
-                    badgeText: 'Tap or Voice',
-                    onTap: () => Navigator.pushNamed(context, '/library'),
-                  ),
-                  const SizedBox(height: 12),
-                  FeatureCard(
-                    title: 'Emergency SOS',
-                    description: 'Instant danger alert with GPS location to emergency contacts (or Shake 3 Times).',
-                    icon: Icons.warning_amber_rounded,
-                    primaryColor: Colors.redAccent,
-                    secondaryColor: Colors.deepOrange,
-                    badgeText: 'Shake 3x or Tap',
-                    onTap: () => Navigator.pushNamed(context, '/emergency'),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ),
-            ),
-
-            // Bottom Emergency SOS Quick Access Banner
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                color: Color(0xFF161B22),
-                border: Border(
-                  top: BorderSide(color: Colors.white12, width: 1),
+                  ],
                 ),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () => Navigator.pushNamed(context, '/emergency'),
-                      icon: const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
-                      label: const Text(
-                        'EMERGENCY SOS (OR SHAKE DEVICE 3x)',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              const SizedBox(height: 24),
+
+              const Text(
+                'ASSISTIVE MODULES',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white54,
+                  letterSpacing: 1.2,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+
+              FeatureCard(
+                title: 'Braille Recognition',
+                description: 'Scan tactile Braille on paper and hear translated text.',
+                icon: Icons.grid_on_rounded,
+                primaryColor: Colors.amberAccent,
+                secondaryColor: Colors.amber,
+                badgeText: 'TACTILE',
+                onTap: () => Navigator.pushNamed(context, '/braille'),
+              ),
+              const SizedBox(height: 12),
+
+              FeatureCard(
+                title: 'Digital Library & RAG',
+                description: 'Search saved books, notes, and PDF documents using spoken voice queries.',
+                icon: Icons.local_library_rounded,
+                primaryColor: Colors.purpleAccent,
+                secondaryColor: Colors.deepPurple,
+                badgeText: 'OFFLINE RAG',
+                onTap: () => Navigator.pushNamed(context, '/library'),
+              ),
+              const SizedBox(height: 12),
+
+              FeatureCard(
+                title: 'OCR Text Reader',
+                description: 'Read printed text documents, signboards, and mail aloud.',
+                icon: Icons.document_scanner_rounded,
+                primaryColor: Colors.lightBlueAccent,
+                secondaryColor: Colors.blue,
+                badgeText: 'TEXT TO SPEECH',
+                onTap: () => Navigator.pushNamed(context, '/ocr'),
+              ),
+              const SizedBox(height: 12),
+
+              FeatureCard(
+                title: 'Scene & Indoor Navigation',
+                description: 'Detect obstacles, doors, and surroundings in real time.',
+                icon: Icons.explore_rounded,
+                primaryColor: Colors.tealAccent,
+                secondaryColor: Colors.teal,
+                badgeText: 'YOLO REAL-TIME',
+                onTap: () => Navigator.pushNamed(context, '/scene'),
+              ),
+              const SizedBox(height: 12),
+
+              FeatureCard(
+                title: 'Emergency SOS',
+                description: 'Shake device 3 times to send GPS coordinates to trusted contacts.',
+                icon: Icons.warning_rounded,
+                primaryColor: Colors.redAccent,
+                secondaryColor: Colors.red,
+                badgeText: 'SAFETY',
+                onTap: () => Navigator.pushNamed(context, '/emergency'),
+              ),
+              const SizedBox(height: 80),
+            ],
+          ),
         ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: VoiceButton(
+        isListening: isListening,
+        onPressed: _activateVoiceRecognition,
       ),
     );
   }

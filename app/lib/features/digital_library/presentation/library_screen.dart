@@ -1,7 +1,9 @@
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../../core/voice/voice_service.dart';
 import '../../../core/storage/storage_service.dart';
+import '../../../core/voice/voice_service.dart';
 import '../data/embedding_store.dart';
 import '../domain/library_service.dart';
 
@@ -17,7 +19,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   late StorageService storageService;
   late LibraryService libraryService;
 
-  String status = 'Smart digital library ready. Tap mic or say search.';
+  String status = 'Smart digital library ready. Upload PDF or tap to search.';
   List<Map<String, dynamic>> searchResults = [];
   bool isSearching = false;
 
@@ -30,7 +32,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     _seedSampleDocumentsIfEmpty();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await voiceService.speak('Smart digital library activated. Say search or tap to begin vector search.');
+      await voiceService.speak('Smart digital library activated. You can upload PDF documents or speak a search query.');
     });
   }
 
@@ -52,6 +54,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
         'Point camera at printed pages or tactile Braille characters to scan and hear translated text spoken clearly.',
         sourceType: 'tutorial',
       );
+    }
+  }
+
+  Future<void> _uploadPdfDocument() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        final pdfFile = File(result.files.single.path!);
+        final fileName = result.files.single.name;
+
+        setState(() {
+          status = 'Extracting text and indexing PDF "$fileName"...';
+        });
+
+        await voiceService.speak('Extracting text and indexing PDF $fileName');
+        await libraryService.importAndIndexPdf(pdfFile);
+
+        if (!mounted) return;
+        setState(() {
+          status = 'PDF "$fileName" imported and indexed into library.';
+        });
+
+        await voiceService.speak('PDF $fileName successfully imported and indexed into your digital library.');
+      }
+    } catch (e) {
+      debugPrint('Error picking PDF file: $e');
+      await voiceService.speak('Failed to import PDF file.');
     }
   }
 
@@ -163,8 +196,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
         title: const Text('Digital Library'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.picture_as_pdf_rounded, color: Colors.deepOrangeAccent),
+            tooltip: 'Upload PDF Document',
+            onPressed: _uploadPdfDocument,
+          ),
+          IconButton(
             icon: const Icon(Icons.note_add_rounded, color: Colors.purpleAccent),
-            tooltip: 'Add Document',
+            tooltip: 'Add Note',
             onPressed: _showAddDocumentDialog,
           ),
         ],
@@ -200,13 +238,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
                             color: Colors.purpleAccent,
-                            letterSpacing: 0.8,
+                            letterSpacing: 1.2,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           status,
-                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                          style: const TextStyle(fontSize: 14, color: Colors.white),
                         ),
                       ],
                     ),
@@ -216,112 +254,146 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Search Action Button
-            ElevatedButton.icon(
-              onPressed: _searchLibrary,
-              icon: Icon(isSearching ? Icons.hourglass_top_rounded : Icons.mic_rounded),
-              label: Text(isSearching ? 'Searching...' : 'Voice Search Library'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.purpleAccent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 20),
-
-            // Results Section Title
-            Row(
-              children: [
-                const Text(
-                  'MATCHING DOCUMENTS',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white38,
-                    letterSpacing: 1.0,
+            // Search Trigger Button
+            SizedBox(
+              height: 56,
+              child: ElevatedButton.icon(
+                onPressed: isSearching ? null : _searchLibrary,
+                icon: Icon(
+                  isSearching ? Icons.mic_rounded : Icons.mic_none_rounded,
+                  size: 28,
+                ),
+                label: Text(
+                  isSearching ? 'Listening...' : 'Voice Search Library',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purpleAccent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: _showAddDocumentDialog,
-                  icon: const Icon(Icons.add, size: 14, color: Colors.purpleAccent),
-                  label: const Text('Add Document', style: TextStyle(fontSize: 12, color: Colors.purpleAccent)),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Action Row: Upload PDF & Add Note
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _uploadPdfDocument,
+                    icon: const Icon(Icons.upload_file_rounded, color: Colors.deepOrangeAccent),
+                    label: const Text('Upload PDF', style: TextStyle(color: Colors.white)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.deepOrangeAccent),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _showAddDocumentDialog,
+                    icon: const Icon(Icons.note_add_rounded, color: Colors.purpleAccent),
+                    label: const Text('Add Note', style: TextStyle(color: Colors.white)),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Colors.purpleAccent),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 20),
 
-            // Results List
+            // Results Section
+            const Text(
+              'RELEVANT MATCHES',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.white54,
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 10),
+
             Expanded(
               child: searchResults.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.search_off_rounded, size: 48, color: Colors.white24),
-                          SizedBox(height: 12),
-                          Text(
-                            'No search results yet.\nTap "Voice Search Library" or add a document.',
+                        children: [
+                          Icon(Icons.library_books_outlined, size: 48, color: Colors.grey.shade700),
+                          const SizedBox(height: 12),
+                          const Text(
+                            'No search results yet.\nUpload PDF documents or tap Voice Search.',
                             textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.white38),
+                            style: TextStyle(color: Colors.white54, fontSize: 14),
                           ),
                         ],
                       ),
                     )
-                  : ListView.separated(
+                  : ListView.builder(
                       itemCount: searchResults.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 12),
                       itemBuilder: (context, index) {
                         final item = searchResults[index];
                         final score = (item['score'] as double? ?? 0.0);
-                        final percentage = (score * 100).toStringAsFixed(1);
+                        final title = item['title'] ?? 'Document';
+                        final text = item['text'] ?? '';
+                        final sourceType = item['source_type'] ?? 'note';
 
-                        return Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF21262D),
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          color: const Color(0xFF161B22),
+                          shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white12),
+                            side: BorderSide(
+                              color: score > 0.4 ? Colors.purpleAccent : Colors.grey.shade800,
+                              width: score > 0.4 ? 1.5 : 1,
+                            ),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      item['title'] as String? ?? 'Document',
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.purpleAccent,
-                                      ),
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.purpleAccent.withAlpha((0.2 * 255).round()),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      'Match: $percentage%',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.purpleAccent,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              backgroundColor: sourceType == 'pdf_import'
+                                  ? Colors.deepOrange.withAlpha((0.2 * 255).round())
+                                  : Colors.purple.withAlpha((0.2 * 255).round()),
+                              child: Icon(
+                                sourceType == 'pdf_import' ? Icons.picture_as_pdf_rounded : Icons.article_rounded,
+                                color: sourceType == 'pdf_import' ? Colors.deepOrangeAccent : Colors.purpleAccent,
+                                size: 20,
                               ),
-                              const SizedBox(height: 8),
-                              Text(
-                                item['text'] as String? ?? '',
-                                style: const TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            title: Text(
+                              title,
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              text,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            trailing: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.purple.withAlpha((0.3 * 255).round()),
+                                borderRadius: BorderRadius.circular(8),
                               ),
-                            ],
+                              child: Text(
+                                '${(score * 100).toStringAsFixed(0)}%',
+                                style: const TextStyle(
+                                  color: Colors.purpleAccent,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            onTap: () async {
+                              await voiceService.speak('Reading document: $title. $text');
+                            },
                           ),
                         );
                       },
@@ -333,4 +405,3 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 }
-
