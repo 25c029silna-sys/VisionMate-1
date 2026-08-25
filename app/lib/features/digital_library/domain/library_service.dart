@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import '../../../core/pdf/pdf_service.dart';
 import '../../../core/tflite/tflite_helper.dart';
+import '../../ocr_reader/domain/ocr_service.dart';
 import '../data/embedding_store.dart';
 import 'minilm_embedder.dart';
 
@@ -10,12 +12,18 @@ class LibraryService {
   final EmbeddingStore embeddingStore;
   final TfliteHelper _tfliteHelper = TfliteHelper();
   final MiniLmEmbedder embedder = MiniLmEmbedder();
-  final PdfService pdfService = PdfService();
+  final PdfService pdfService;
+  final OcrService ocrService;
   bool _isModelAvailable = false;
 
   bool get isModelAvailable => _isModelAvailable;
 
-  LibraryService(this.embeddingStore);
+  LibraryService(
+    this.embeddingStore, {
+    PdfService? pdfService,
+    OcrService? ocrService,
+  })  : pdfService = pdfService ?? PdfService(),
+        ocrService = ocrService ?? OcrService();
 
   Future<bool> checkModelAvailability() async {
     final interpreter = await _tfliteHelper.loadModel('assets/models/minilm.tflite');
@@ -53,14 +61,42 @@ class LibraryService {
   }
 
   /// Imports a PDF file, extracts all page text, saves to SQLite database, and computes vector embeddings.
+  /// If the PDF contains no extractable programmatic text layer (scanned/image PDF), it triggers an
+  /// automatic on-device OCR fallback to extract and index text from page images.
   Future<int> importAndIndexPdf(File pdfFile) async {
     final fileName = pdfFile.path.split(Platform.pathSeparator).last;
     final title = fileName.replaceAll('.pdf', '').replaceAll('_', ' ');
     
-    final extractedText = await pdfService.extractTextFromPdf(pdfFile);
-    final textToIndex = extractedText.isNotEmpty ? extractedText : 'PDF Document containing no extractable text layer.';
+    // 1. Attempt fast native text layer extraction
+    var extractedText = await pdfService.extractTextFromPdf(pdfFile);
+    String sourceType = 'pdf_import';
+
+    // 2. If no text layer exists (scanned/image PDF), fall back to OCR
+    if (extractedText.trim().isEmpty) {
+      debugPrint('LibraryService: No programmatic text layer found in "$fileName". Initiating OCR fallback...');
+      final pageImages = await pdfService.extractImagesFromPdf(pdfFile);
+      
+      if (pageImages.isNotEmpty) {
+        final ocrResults = <String>[];
+        for (final pageImg in pageImages) {
+          final pageText = await ocrService.recognizeTextFromImage(pageImg.path);
+          if (pageText.isNotEmpty && pageText != 'NO_TEXT_FOUND' && pageText != 'EXTRACTION_ERROR') {
+            ocrResults.add(pageText);
+          }
+        }
+        if (ocrResults.isNotEmpty) {
+          extractedText = ocrResults.join('\n\n--- Page Break ---\n\n');
+          sourceType = 'scanned_pdf_ocr';
+          debugPrint('LibraryService: Successfully extracted OCR text from ${pageImages.length} PDF pages.');
+        }
+      }
+    }
+
+    final textToIndex = extractedText.isNotEmpty
+        ? extractedText
+        : 'Scanned PDF Document containing no recognizable text layer.';
     
-    return await addAndIndexDocument(title, textToIndex, sourceType: 'pdf_import');
+    return await addAndIndexDocument(title, textToIndex, sourceType: sourceType);
   }
 
   /// Generates vector embedding and ranks documents for a spoken search query string.
@@ -107,3 +143,4 @@ class LibraryService {
     return scored.take(topK).toList();
   }
 }
+

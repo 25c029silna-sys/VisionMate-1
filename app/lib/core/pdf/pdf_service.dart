@@ -80,4 +80,46 @@ class PdfService {
       return '';
     }
   }
+
+  /// Extracts embedded image page files from a scanned PDF.
+  /// Returns a list of File objects containing the page images.
+  Future<List<File>> extractImagesFromPdf(File pdfFile) async {
+    final images = <File>[];
+    try {
+      final bytes = await pdfFile.readAsBytes();
+      final tempDir = await getTemporaryDirectory();
+      final prefix = 'pdf_scan_${DateTime.now().millisecondsSinceEpoch}';
+
+      // Find all JPEG image byte sequences (SOI: 0xFF 0xD8 0xFF ... EOI: 0xFF 0xD9)
+      int i = 0;
+      int imgIndex = 0;
+      while (i < bytes.length - 3) {
+        if (bytes[i] == 0xFF && bytes[i + 1] == 0xD8 && bytes[i + 2] == 0xFF) {
+          int end = i + 3;
+          while (end < bytes.length - 1) {
+            if (bytes[end] == 0xFF && bytes[end + 1] == 0xD9) {
+              end += 2;
+              break;
+            }
+            end++;
+          }
+          if (end <= bytes.length && (end - i) > 512) {
+            final imgBytes = bytes.sublist(i, end);
+            final imgFile = File('${tempDir.path}/${prefix}_page_$imgIndex.jpg');
+            await imgFile.writeAsBytes(imgBytes);
+            images.add(imgFile);
+            imgIndex++;
+            i = end;
+            continue;
+          }
+        }
+        i++;
+      }
+      debugPrint('PdfService: Extracted ${images.length} page images from scanned PDF ${pdfFile.path}');
+    } catch (e) {
+      debugPrint('PdfService: Error extracting images from PDF: $e');
+    }
+    return images;
+  }
 }
+

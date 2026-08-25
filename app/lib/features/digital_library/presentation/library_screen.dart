@@ -1,5 +1,3 @@
-import 'dart:io';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/storage/storage_service.dart';
@@ -19,7 +17,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   late StorageService storageService;
   late LibraryService libraryService;
 
-  String status = 'Smart digital library ready. Upload PDF or tap to search.';
+  String status = 'Smart digital library ready. Search by voice or add notes.';
   List<Map<String, dynamic>> searchResults = [];
   bool isSearching = false;
 
@@ -32,7 +30,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     _seedSampleDocumentsIfEmpty();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await voiceService.speak('Smart digital library activated. You can upload PDF documents or speak a search query.');
+      await voiceService.speak('Smart digital library activated. Speak your search query to search Braille documents and notes.');
     });
   }
 
@@ -54,37 +52,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         'Point camera at printed pages or tactile Braille characters to scan and hear translated text spoken clearly.',
         sourceType: 'tutorial',
       );
-    }
-  }
-
-  Future<void> _uploadPdfDocument() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['pdf'],
-      );
-
-      if (result != null && result.files.single.path != null) {
-        final pdfFile = File(result.files.single.path!);
-        final fileName = result.files.single.name;
-
-        setState(() {
-          status = 'Extracting text and indexing PDF "$fileName"...';
-        });
-
-        await voiceService.speak('Extracting text and indexing PDF $fileName');
-        await libraryService.importAndIndexPdf(pdfFile);
-
-        if (!mounted) return;
-        setState(() {
-          status = 'PDF "$fileName" imported and indexed into library.';
-        });
-
-        await voiceService.speak('PDF $fileName successfully imported and indexed into your digital library.');
-      }
-    } catch (e) {
-      debugPrint('Error picking PDF file: $e');
-      await voiceService.speak('Failed to import PDF file.');
     }
   }
 
@@ -196,13 +163,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
         title: const Text('Digital Library'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.picture_as_pdf_rounded, color: Colors.deepOrangeAccent),
-            tooltip: 'Upload PDF Document',
-            onPressed: _uploadPdfDocument,
-          ),
-          IconButton(
             icon: const Icon(Icons.note_add_rounded, color: Colors.purpleAccent),
-            tooltip: 'Add Note',
+            tooltip: 'Add Note / Document',
             onPressed: _showAddDocumentDialog,
           ),
         ],
@@ -276,35 +238,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
 
-            // Action Row: Upload PDF & Add Note
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _uploadPdfDocument,
-                    icon: const Icon(Icons.upload_file_rounded, color: Colors.deepOrangeAccent),
-                    label: const Text('Upload PDF', style: TextStyle(color: Colors.white)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.deepOrangeAccent),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
+            // Add Document Action Button
+            SizedBox(
+              height: 48,
+              child: OutlinedButton.icon(
+                onPressed: _showAddDocumentDialog,
+                icon: const Icon(Icons.note_add_rounded, color: Colors.purpleAccent),
+                label: const Text('Add Note / Document', style: TextStyle(color: Colors.white, fontSize: 16)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.purpleAccent),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _showAddDocumentDialog,
-                    icon: const Icon(Icons.note_add_rounded, color: Colors.purpleAccent),
-                    label: const Text('Add Note', style: TextStyle(color: Colors.white)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.purpleAccent),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
             const SizedBox(height: 20),
 
@@ -329,7 +276,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           Icon(Icons.library_books_outlined, size: 48, color: Colors.grey.shade700),
                           const SizedBox(height: 12),
                           const Text(
-                            'No search results yet.\nUpload PDF documents or tap Voice Search.',
+                            'No search results yet.\nRecognize Braille pages to export PDFs or tap Voice Search.',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: Colors.white54, fontSize: 14),
                           ),
@@ -345,6 +292,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         final text = item['text'] ?? '';
                         final sourceType = item['source_type'] ?? 'note';
 
+                        final isBraillePdf = sourceType == 'braille_pdf' || sourceType == 'pdf_import';
+
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
                           color: const Color(0xFF161B22),
@@ -357,12 +306,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ),
                           child: ListTile(
                             leading: CircleAvatar(
-                              backgroundColor: sourceType == 'pdf_import'
+                              backgroundColor: isBraillePdf
                                   ? Colors.deepOrange.withAlpha((0.2 * 255).round())
                                   : Colors.purple.withAlpha((0.2 * 255).round()),
                               child: Icon(
-                                sourceType == 'pdf_import' ? Icons.picture_as_pdf_rounded : Icons.article_rounded,
-                                color: sourceType == 'pdf_import' ? Colors.deepOrangeAccent : Colors.purpleAccent,
+                                isBraillePdf ? Icons.picture_as_pdf_rounded : Icons.article_rounded,
+                                color: isBraillePdf ? Colors.deepOrangeAccent : Colors.purpleAccent,
                                 size: 20,
                               ),
                             ),
@@ -405,3 +354,4 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 }
+

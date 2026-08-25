@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:provider/provider.dart';
 import '../../../core/camera/camera_service.dart';
+import '../../../core/storage/storage_service.dart';
 import '../../../core/voice/voice_service.dart';
+import '../../digital_library/data/embedding_store.dart';
+import '../../digital_library/domain/library_service.dart';
 import '../domain/braille_service.dart';
 
 class BrailleScreen extends StatefulWidget {
@@ -112,7 +115,22 @@ class _BrailleScreenState extends State<BrailleScreen> {
     });
 
     try {
-      final pdfFile = await brailleService.exportBrailleTextToPdf(result);
+      final now = DateTime.now();
+      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      final docTitle = 'Braille Document ($dateStr $timeStr)';
+
+      final pdfFile = await brailleService.exportBrailleTextToPdf(result, title: docTitle);
+      
+      // Index the Braille PDF into the Digital Library vector store for semantic search
+      try {
+        final storage = Provider.of<StorageService>(context, listen: false);
+        final libraryService = LibraryService(EmbeddingStore(storage));
+        await libraryService.addAndIndexDocument(docTitle, result, sourceType: 'braille_pdf');
+      } catch (storageErr) {
+        debugPrint('BrailleScreen: Storage indexing note: $storageErr');
+      }
+
       if (!mounted) return;
 
       setState(() {
@@ -121,12 +139,12 @@ class _BrailleScreenState extends State<BrailleScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('PDF saved successfully to ${pdfFile.path}'),
+          content: Text('PDF saved and indexed into Digital Library (${pdfFile.path})'),
           backgroundColor: Colors.green,
         ),
       );
 
-      await voiceService.speak('Braille text successfully converted and saved as PDF document.');
+      await voiceService.speak('Braille text successfully converted to PDF and saved to your digital library.');
     } catch (e) {
       if (!mounted) return;
       setState(() {
