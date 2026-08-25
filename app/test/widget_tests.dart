@@ -13,7 +13,7 @@ import 'package:visionmate/features/emergency_sos/presentation/emergency_screen.
 Widget _wrap(Widget child) {
   return MultiProvider(
     providers: [
-      Provider<VoiceService>(create: (_) => VoiceService()),
+      ChangeNotifierProvider<VoiceService>(create: (_) => VoiceService()),
       Provider<CommandRouter>(create: (_) => CommandRouter()),
       Provider<StorageService>(create: (_) => StorageService()),
     ],

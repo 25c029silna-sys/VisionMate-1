@@ -4,24 +4,27 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import '../../../core/pdf/pdf_service.dart';
 import '../../../core/tflite/tflite_helper.dart';
+import '../data/braille_preprocessor.dart';
 
 class BrailleService {
   final TfliteHelper _tfliteHelper = TfliteHelper();
+  final BraillePreprocessor _preprocessor = BraillePreprocessor();
   final PdfService pdfService = PdfService();
   bool _isModelAvailable = false;
   List<String> _labels = [];
 
   bool get isModelAvailable => _isModelAvailable;
 
-  /// Default 64-class Braille cell character map dictionary fallback.
+  /// Default 64-class Braille cell character map dictionary fallback (matching 6-dot binary order).
   static const List<String> defaultBrailleDictionary = [
-    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
-    'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
-    'u', 'v', 'w', 'x', 'y', 'z',
-    '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
-    '.', ',', ';', ':', '!', '?', "'", '"', '-', '(',
-    ')', '/', '@', '#', '\$', '%', '&', '*', '+', '=',
-    '<', '>', '[', ']', '{', '}', '_', ' '
+    ' ', ',', '?', '?', '?', '?', '?', '?',
+    '\'', '-', '*', '?', '/', '?', '(', '#',
+    '"', '?', ':', ')', 'i', '?', 'j', 'w',
+    ';', '?', '!', '?', 's', '?', 't', '?',
+    'a', '?', 'e', '?', 'c', '?', 'd', '?',
+    'k', 'u', 'o', 'z', 'm', 'x', 'n', 'y',
+    'b', '?', 'h', '?', 'f', '?', 'g', '?',
+    'l', 'v', 'r', '?', 'p', '?', 'q', '?'
   ];
 
   Future<bool> checkModelAvailability() async {
@@ -34,27 +37,28 @@ class BrailleService {
   Future<void> _loadLabels() async {
     try {
       final labelsData = await rootBundle.loadString('assets/labels/braille_labels.txt');
-      _labels = labelsData.split('\n').map((l) => l.trimRight()).where((l) => l.isNotEmpty).toList();
+      final loaded = labelsData.split('\n').map((l) => l.trimRight()).toList();
+      if (loaded.isNotEmpty) {
+        _labels = loaded;
+        return;
+      }
     } catch (e) {
       debugPrint('BrailleService: Failed to load labels asset, falling back to default dictionary.');
-      _labels = List.from(defaultBrailleDictionary);
     }
+    _labels = List.from(defaultBrailleDictionary);
   }
 
-  /// Classifies a photographed Braille page into structured digital text
-  /// by segmenting image into cells and running real TFLite CNN inference.
+  /// Classifies a photographed Braille page into structured digital text.
+  /// Uses TFLite CNN inference when available, or heuristic cell grid processing as fallback.
   Future<String> classifyBraille(String imagePath) async {
-    final available = await checkModelAvailability();
-    if (!available || _tfliteHelper.interpreter == null) {
-      return 'MODEL_UNAVAILABLE';
-    }
+    final hasModel = await checkModelAvailability();
 
     try {
-      debugPrint('Classifying Braille page image at $imagePath...');
+      debugPrint('Classifying Braille page image at $imagePath (TFLite Model Active: $hasModel)...');
       final file = File(imagePath);
       if (!file.existsSync()) {
         debugPrint('Image file at $imagePath does not exist.');
-        return 'No image captured. Please try again.';
+        return hasModel ? 'No image captured. Please try again.' : 'MODEL_UNAVAILABLE';
       }
 
       final bytes = await file.readAsBytes();
@@ -64,17 +68,101 @@ class BrailleService {
         return 'Could not decode image format.';
       }
 
-      final List<int> detectedCellIndices = await _processImageAndRunInference(image);
-      if (detectedCellIndices.isEmpty) {
-        return 'No Braille text detected. Align camera over Braille cells.';
+      if (hasModel && _tfliteHelper.interpreter != null) {
+        final List<int> detectedCellIndices = await _processImageAndRunInference(image);
+        if (detectedCellIndices.isEmpty) {
+          return 'No Braille text detected. Please align camera over a Braille page.';
+        }
+        final recognizedText = assembleBrailleText(detectedCellIndices);
+        final cleanedText = recognizedText.replaceAll('?', '').trim();
+        return cleanedText.isNotEmpty ? recognizedText : 'No Braille text detected. Please align camera over a Braille page.';
+      } else {
+        // Fallback: Pure Dart cell grid & 6-dot heuristic analysis
+        final cells = _preprocessor.extractCellData(image);
+        if (cells.isEmpty || cells.every((c) => c.isEmpty)) {
+          return 'No Braille text detected. Please align camera over a Braille page.';
+        }
+        final recognizedText = assembleBrailleFromCells(cells);
+        final cleanedText = recognizedText.replaceAll('?', '').trim();
+        return cleanedText.isNotEmpty ? recognizedText : 'No Braille text detected. Please align camera over a Braille page.';
       }
-
-      final recognizedText = assembleBrailleText(detectedCellIndices);
-      return recognizedText.isNotEmpty ? recognizedText : 'No readable Braille text found.';
     } catch (e, stack) {
       debugPrint('Braille classification error: $e\n$stack');
       return 'Error during Braille processing: $e';
     }
+  }
+
+  /// Map 6-element boolean dot list [d1, d2, d3, d4, d5, d6] to Braille character
+  String map6DotsToCharacter(List<bool> dots) {
+    if (dots.length < 6 || dots.every((d) => !d)) return ' ';
+
+    final pattern = dots.map((d) => d ? '1' : '0').join();
+    const map = {
+      '100000': 'a', '110000': 'b', '100100': 'c', '100110': 'd', '100010': 'e',
+      '110100': 'f', '110110': 'g', '110010': 'h', '010100': 'i', '010110': 'j',
+      '101000': 'k', '111000': 'l', '101100': 'm', '101110': 'n', '101010': 'o',
+      '111100': 'p', '111110': 'q', '111010': 'r', '011100': 's', '011110': 't',
+      '101001': 'u', '111001': 'v', '010111': 'w', '101101': 'x', '101111': 'y',
+      '101011': 'z', '001111': '#', '000001': ',',
+    };
+
+    return map[pattern] ?? '?';
+  }
+
+  String assembleBrailleFromCells(List<BrailleCellData> cells) {
+    final buffer = StringBuffer();
+    bool isNumberMode = false;
+    bool isCapitalMode = false;
+
+    final numberMap = {
+      'a': '1', 'b': '2', 'c': '3', 'd': '4', 'e': '5',
+      'f': '6', 'g': '7', 'h': '8', 'i': '9', 'j': '0',
+    };
+
+    int lastRow = -1;
+
+    for (final cell in cells) {
+      if (cell.row != lastRow && lastRow != -1) {
+        buffer.write(' ');
+      }
+      lastRow = cell.row;
+
+      if (cell.isEmpty) {
+        isNumberMode = false;
+        isCapitalMode = false;
+        buffer.write(' ');
+        continue;
+      }
+
+      final rawChar = map6DotsToCharacter(cell.dots);
+
+      if (rawChar == '#') {
+        isNumberMode = true;
+        continue;
+      }
+      if (rawChar == ',') {
+        isCapitalMode = true;
+        continue;
+      }
+      if (rawChar == ' ') {
+        isNumberMode = false;
+        isCapitalMode = false;
+        buffer.write(' ');
+        continue;
+      }
+
+      String charToWrite = rawChar;
+      if (isNumberMode && numberMap.containsKey(rawChar)) {
+        charToWrite = numberMap[rawChar]!;
+      } else if (isCapitalMode) {
+        charToWrite = rawChar.toUpperCase();
+        isCapitalMode = false;
+      }
+
+      buffer.write(charToWrite);
+    }
+
+    return buffer.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   /// Exports recognized Braille text to a PDF file saved in device storage.
@@ -86,6 +174,7 @@ class BrailleService {
   Future<List<int>> _processImageAndRunInference(img.Image originalImage) async {
     final interpreter = _tfliteHelper.interpreter!;
     final List<int> cellIndices = [];
+    int totalDetectedNonSpaceCount = 0;
 
     // 1. Resize high-res photos to standard 800px width to stabilize cell aspect ratios
     img.Image scaledImage = originalImage;
@@ -132,8 +221,6 @@ class BrailleService {
         double minLum = 255.0;
         double maxLum = 0.0;
 
-        // Prepare TFLite input tensor shape [1, 28, 28, 1] raw 0..255 float32
-        // (Rescaling(1./255) layer inside the TFLite model performs the 0..1 normalization)
         final inputTensor = List.generate(
           1,
           (_) => List.generate(
@@ -171,18 +258,24 @@ class BrailleService {
           }
         }
 
-        // If class is 0 or low probability, treat as space ' '
-        if (bestClass == 0 || maxProb < 0.20) {
+        // Require at least 0.35 confidence for a non-space Braille character class
+        if (bestClass == 0 || maxProb < 0.35) {
           cellIndices.add(0);
         } else {
           cellIndices.add(bestClass);
           lineValidCount++;
+          totalDetectedNonSpaceCount++;
         }
       }
 
       if (lineValidCount > 0) {
         cellIndices.add(0); // Line space separator
       }
+    }
+
+    // Require at least 2 valid character detections to consider the photo a Braille image
+    if (totalDetectedNonSpaceCount < 2) {
+      return [];
     }
 
     return cellIndices;
@@ -194,7 +287,7 @@ class BrailleService {
     if (index >= 0 && index < activeList.length) {
       return activeList[index];
     }
-    return ' ';
+    return '?';
   }
 
   /// Reconstructs a list of cell indices into continuous structured text with stateful decoding.

@@ -47,36 +47,58 @@ class _BrailleScreenState extends State<BrailleScreen> {
       result = 'Processing Braille page image...';
     });
 
-    await voiceService.speak('Scanning Braille page. Please hold the camera steady.');
+    try {
+      await voiceService.speak('Scanning Braille page. Please hold the camera steady.');
 
-    String imagePath = 'captured_braille.jpg';
-    if (cameraService.isInitialized) {
-      final photo = await cameraService.takePicture();
-      if (photo != null) {
-        imagePath = photo.path;
+      String? imagePath;
+      if (cameraService.isInitialized) {
+        final photo = await cameraService.takePicture();
+        if (photo != null) {
+          imagePath = photo.path;
+        }
       }
-    }
 
-    final extracted = await brailleService.classifyBraille(imagePath);
+      if (imagePath == null) {
+        const errorMsg = 'Could not capture photo from camera. Please ensure camera permission is granted.';
+        if (!mounted) return;
+        setState(() {
+          result = errorMsg;
+          isScanning = false;
+        });
+        await voiceService.speak(errorMsg);
+        return;
+      }
 
-    if (!mounted) return;
+      final extracted = await brailleService.classifyBraille(imagePath);
 
-    if (extracted == 'MODEL_UNAVAILABLE') {
-      const errorMsg = "This feature isn't available yet — the recognition model hasn't been installed.";
+      if (!mounted) return;
+
+      if (extracted == 'MODEL_UNAVAILABLE') {
+        const errorMsg = "The trained Braille model file is currently unavailable. Operating in standard cell detection mode.";
+        setState(() {
+          result = errorMsg;
+          isScanning = false;
+        });
+        await voiceService.speak(errorMsg);
+        return;
+      }
+
+      setState(() {
+        result = extracted;
+        isScanning = false;
+      });
+
+      await voiceService.speak('Braille recognition complete. Recognized text: $extracted');
+    } catch (e, stack) {
+      debugPrint('BrailleScreen scanning error: $e\n$stack');
+      if (!mounted) return;
+      const errorMsg = 'An error occurred while scanning the Braille page. Please try again.';
       setState(() {
         result = errorMsg;
         isScanning = false;
       });
       await voiceService.speak(errorMsg);
-      return;
     }
-
-    setState(() {
-      result = extracted;
-      isScanning = false;
-    });
-
-    await voiceService.speak('Braille recognition complete. Recognized text: $extracted');
   }
 
   Future<void> _exportToPdf() async {

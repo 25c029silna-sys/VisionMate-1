@@ -12,37 +12,37 @@ def create_braille_cnn(input_shape=(28, 28, 1), num_classes=64):
     Input: 28x28 grayscale image patch of a single Braille cell.
     Output: Softmax probability over 64 possible Braille dot combinations (2^6 = 64).
     """
+    inputs = layers.Input(shape=input_shape)
+    x = layers.Rescaling(1./255)(inputs)  # Rescale FIRST so pixels are float [0, 1]
+
     data_augmentation = keras.Sequential([
-        layers.RandomRotation(0.05),
-        layers.RandomTranslation(0.05, 0.05),
-        layers.RandomContrast(0.1),
+        layers.RandomRotation(0.03),
+        layers.RandomTranslation(0.03, 0.03),
     ], name="data_augmentation")
 
-    inputs = layers.Input(shape=input_shape)
-    x = data_augmentation(inputs)
-    x = layers.Rescaling(1./255)(x)
+    x = data_augmentation(x)
 
     x = layers.Conv2D(32, kernel_size=(3, 3), activation='relu', padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.MaxPooling2D(pool_size=(2, 2))(x)
-    
+
     x = layers.Conv2D(64, kernel_size=(3, 3), activation='relu', padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.MaxPooling2D(pool_size=(2, 2))(x)
-    
+
     x = layers.Conv2D(128, kernel_size=(3, 3), activation='relu', padding='same')(x)
     x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.3)(x)
-    
+    x = layers.MaxPooling2D(pool_size=(2, 2))(x)
+
     x = layers.Flatten()(x)
-    x = layers.Dense(128, activation='relu')(x)
-    x = layers.Dropout(0.4)(x)
+    x = layers.Dense(256, activation='relu')(x)
+    x = layers.Dropout(0.3)(x)
     outputs = layers.Dense(num_classes, activation='softmax')(x)
-    
+
     model = keras.Model(inputs=inputs, outputs=outputs, name="Braille_CNN")
-    
+
     model.compile(
-        optimizer='adam',
+        optimizer=keras.optimizers.Adam(learning_rate=1e-3),
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy']
     )

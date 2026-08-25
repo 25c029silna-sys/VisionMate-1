@@ -16,28 +16,28 @@ void main() {
     });
 
     test('mapIndexToCharacter returns correct default character mapping', () {
-      expect(brailleService.mapIndexToCharacter(0), 'a');
-      expect(brailleService.mapIndexToCharacter(1), 'b');
-      expect(brailleService.mapIndexToCharacter(25), 'z');
-      expect(brailleService.mapIndexToCharacter(63), ' ');
+      expect(brailleService.mapIndexToCharacter(0), ' ');
+      expect(brailleService.mapIndexToCharacter(32), 'a');
+      expect(brailleService.mapIndexToCharacter(48), 'b');
+      expect(brailleService.mapIndexToCharacter(43), 'z');
       expect(brailleService.mapIndexToCharacter(100), '?');
     });
 
     test('assembleBrailleText reconstructs raw character sequence', () {
-      // Cell indices for 'a', 'b', 'c' -> 0, 1, 2
-      final text = brailleService.assembleBrailleText([0, 1, 2]);
+      // Cell indices for 'a', 'b', 'c' -> 32, 48, 36
+      final text = brailleService.assembleBrailleText([32, 48, 36]);
       expect(text, 'abc');
     });
 
     test('assembleBrailleText converts number sign (#) prefix correctly', () {
-      // Cell index for '#' is 49. 'a', 'b' -> 0, 1 become '1', '2'
-      final text = brailleService.assembleBrailleText([49, 0, 1]);
+      // Cell index for '#' is 15. 'a', 'b' -> 32, 48 become '1', '2'
+      final text = brailleService.assembleBrailleText([15, 32, 48]);
       expect(text, '12');
     });
 
     test('assembleBrailleText handles capital modifier (,) prefix correctly', () {
-      // Cell index for ',' is 37. 'h', 'e', 'l', 'l', 'o' -> 7, 4, 11, 11, 14
-      final text = brailleService.assembleBrailleText([37, 7, 4, 11, 11, 14]);
+      // Cell index for ',' is 1. 'h', 'e', 'l', 'l', 'o' -> 50, 34, 56, 56, 42
+      final text = brailleService.assembleBrailleText([1, 50, 34, 56, 56, 42]);
       expect(text, 'Hello');
     });
   });

@@ -35,6 +35,8 @@ docs/**/jupyter_checkpoints/
 
 # Braille training dataset
 ml/braille_cnn/data/
+ml/dsbi_raw/
+**/ephemeral/
 
 # Python cache
 __pycache__/

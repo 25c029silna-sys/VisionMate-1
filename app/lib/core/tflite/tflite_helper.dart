@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 class TfliteHelper {
@@ -9,14 +10,34 @@ class TfliteHelper {
   Interpreter? get interpreter => _interpreter;
 
   Future<Interpreter?> loadModel(String assetPath) async {
+    if (_interpreter != null) return _interpreter;
+
     try {
-      _interpreter ??= await Interpreter.fromAsset(assetPath);
+      // Validate asset existence and byte signature before loading in C++ runtime
+      final byteData = await rootBundle.load(assetPath);
+      if (byteData.lengthInBytes < 1024) {
+        debugPrint('TfliteHelper: Asset "$assetPath" is too small (${byteData.lengthInBytes} bytes) to be a valid TFLite model file.');
+        _isModelAvailable = false;
+        return null;
+      }
+
+      final bytes = byteData.buffer.asUint8List();
+      // Check TFL3 magic bytes at offset 4: [0x54, 0x46, 0x4C, 0x33]
+      if (bytes.length >= 8) {
+        final isTfliteMagic = bytes[4] == 0x54 && bytes[5] == 0x46 && bytes[6] == 0x4C && bytes[7] == 0x33;
+        if (!isTfliteMagic) {
+          debugPrint('TfliteHelper: Asset "$assetPath" does not contain valid TFLite FlatBuffer header (TFL3). Skipping native C++ load.');
+          _isModelAvailable = false;
+          return null;
+        }
+      }
+
+      _interpreter = await Interpreter.fromAsset(assetPath);
       _isModelAvailable = true;
       return _interpreter;
     } catch (e, stackTrace) {
       _isModelAvailable = false;
       debugPrint('TfliteHelper error: Failed to load TFLite model from asset "$assetPath": $e');
-      debugPrintStack(stackTrace: stackTrace);
       return null;
     }
   }
@@ -27,3 +48,4 @@ class TfliteHelper {
     _isModelAvailable = false;
   }
 }
+

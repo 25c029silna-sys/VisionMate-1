@@ -34,16 +34,16 @@ void main() {
       });
 
       test('[Braille-1.2] Character dictionary index mapping covers 64 Braille cells', () {
-        expect(brailleService.mapIndexToCharacter(0), equals('a'));
-        expect(brailleService.mapIndexToCharacter(25), equals('z'));
-        expect(brailleService.mapIndexToCharacter(63), equals(' '));
+        expect(brailleService.mapIndexToCharacter(0), equals(' '));
+        expect(brailleService.mapIndexToCharacter(32), equals('a'));
+        expect(brailleService.mapIndexToCharacter(43), equals('z'));
         expect(brailleService.mapIndexToCharacter(-1), equals('?'));
         expect(brailleService.mapIndexToCharacter(100), equals('?'));
       });
 
       test('[Braille-1.3] Reconstructs cell index sequence into digital text string', () {
-        // 22 = w, 4 = e, 11 = l, 2 = c, 14 = o, 12 = m, 4 = e
-        final indices = [22, 4, 11, 2, 14, 12, 4];
+        // 23 = w, 34 = e, 56 = l, 36 = c, 42 = o, 44 = m, 34 = e
+        final indices = [23, 34, 56, 36, 42, 44, 34];
         final text = brailleService.assembleBrailleText(indices);
         expect(text, equals('welcome'));
       });
