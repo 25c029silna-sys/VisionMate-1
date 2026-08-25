@@ -101,7 +101,6 @@ void main() {
 
     expect(find.text('Chapter 1: The Beginning'), findsOneWidget);
     expect(find.text('Read'), findsOneWidget);
-    expect(find.text('Context'), findsOneWidget);
     verify(() => mockVoiceService.speak('Recognized text is: Chapter 1: The Beginning')).called(1);
   });
 }

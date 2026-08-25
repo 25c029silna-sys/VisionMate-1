@@ -96,8 +96,6 @@ class _OcrScreenState extends State<OcrScreen> {
       await _processScan();
     } else if (lower.contains('scan again') || lower.contains('rescan')) {
       await _processScan();
-    } else if (lower.contains('tell me more') || lower.contains('more context') || lower.contains('context')) {
-      await _fetchContext();
     } else if (lower.contains('repeat') || lower.contains('again')) {
       if (extractedText.isNotEmpty) {
         await voiceService.speak('Recognized text: $extractedText');
@@ -168,16 +166,6 @@ class _OcrScreenState extends State<OcrScreen> {
     });
 
     await voiceService.speak('Recognized text is: $result');
-  }
-
-  Future<void> _fetchContext() async {
-    if (extractedText.isEmpty) {
-      await voiceService.speak('No text has been read yet to get context for.');
-      return;
-    }
-    await voiceService.speak('Fetching additional context.');
-    final contextMsg = await ocrService.fetchWebContext(extractedText);
-    await voiceService.speak(contextMsg);
   }
 
   @override
@@ -316,20 +304,6 @@ class _OcrScreenState extends State<OcrScreen> {
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.teal.shade700,
                                 foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            height: 52,
-                            child: OutlinedButton.icon(
-                              onPressed: _fetchContext,
-                              icon: const Icon(Icons.info_outline, size: 22),
-                              label: const Text('Context', style: TextStyle(fontSize: 15)),
-                              style: OutlinedButton.styleFrom(
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),

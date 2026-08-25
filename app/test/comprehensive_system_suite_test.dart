@@ -137,9 +137,9 @@ void main() {
       });
 
       test('[Scene-4.3] Room summary generator produces warning for close obstacles', () {
-        final closeObstacle = DetectedObstacle(label: 'table', confidence: 0.9, x: 0, y: 0, width: 50, height: 50, distanceCategory: 'close');
+        final closeObstacle = DetectedObstacle(label: 'table', confidence: 0.9, x: 0, y: 0, width: 0.8, height: 0.8, distanceMeters: 0.9, distanceCategory: 'close');
         final summary = sceneService.generateSceneSummary([closeObstacle]);
-        expect(summary, contains('Warning: table detected right in front of you.'));
+        expect(summary, contains('Warning: table, 0.9 meters detected right in front of you.'));
       });
     });
 

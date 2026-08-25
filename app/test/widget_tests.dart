@@ -24,26 +24,31 @@ Widget _wrap(Widget child) {
 void main() {
   testWidgets('Braille screen loads', (tester) async {
     await tester.pumpWidget(_wrap(const BrailleScreen()));
+    await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Scan Braille'), findsOneWidget);
   });
 
   testWidgets('Library screen loads', (tester) async {
     await tester.pumpWidget(_wrap(const LibraryScreen()));
-    expect(find.text('Search Library'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Voice Search Library'), findsOneWidget);
   });
 
   testWidgets('OCR screen loads', (tester) async {
     await tester.pumpWidget(_wrap(const OcrScreen()));
-    expect(find.text('Read Document'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Scan Document'), findsOneWidget);
   });
 
   testWidgets('Scene screen loads', (tester) async {
     await tester.pumpWidget(_wrap(const SceneScreen()));
+    await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Describe Surroundings'), findsOneWidget);
   });
 
   testWidgets('Emergency screen loads', (tester) async {
     await tester.pumpWidget(_wrap(const EmergencyScreen()));
-    expect(find.text('Send Emergency SOS'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.textContaining('TRIGGER EMERGENCY SOS'), findsOneWidget);
   });
 }
