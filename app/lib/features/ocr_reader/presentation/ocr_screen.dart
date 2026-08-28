@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../core/voice/voice_service.dart';
 import '../../../core/camera/camera_service.dart';
 import '../../../core/permissions/permission_service.dart';
+import '../../../widgets/voice_button.dart';
 import '../domain/ocr_service.dart';
 
 class OcrScreen extends StatefulWidget {
@@ -33,6 +34,7 @@ class _OcrScreenState extends State<OcrScreen> {
   bool isCameraReady = false;
   bool isScanning = false;
   bool isFlashOn = false;
+  bool isListening = false;
 
   @override
   void initState() {
@@ -66,6 +68,9 @@ class _OcrScreenState extends State<OcrScreen> {
       await voiceService.speak(
         'OCR reader activated. Point your camera at the text and say capture or tap to scan.',
       );
+      if (mounted) {
+        await _handleVoiceCommand();
+      }
     } catch (e) {
       debugPrint('OCR Screen camera init failed: $e');
       await voiceService.speak('Camera initialization failed. Returning to main menu.');
@@ -86,15 +91,35 @@ class _OcrScreenState extends State<OcrScreen> {
   }
 
   Future<void> _handleVoiceCommand() async {
-    final command = await voiceService.listen();
-    if (command == null || command.isEmpty) return;
+    if (isListening) {
+      await voiceService.stopListening();
+      if (mounted) {
+        setState(() {
+          isListening = false;
+        });
+      }
+      return;
+    }
 
-    final lower = command.toLowerCase();
+    if (mounted) {
+      setState(() {
+        isListening = true;
+      });
+    }
+
+    final command = await voiceService.listen();
+
+    if (!mounted) return;
+    setState(() {
+      isListening = false;
+    });
+
+    if (command == null || command.trim().isEmpty) return;
+
+    final lower = command.toLowerCase().trim();
     if (lower.contains('stop')) {
       await voiceService.speak('Stopping playback.');
-    } else if (lower.contains('capture') || lower.contains('scan') || lower.contains('read')) {
-      await _processScan();
-    } else if (lower.contains('scan again') || lower.contains('rescan')) {
+    } else if (lower.contains('capture') || lower.contains('scan') || lower.contains('read') || lower.contains('process')) {
       await _processScan();
     } else if (lower.contains('repeat') || lower.contains('again')) {
       if (extractedText.isNotEmpty) {
@@ -104,8 +129,16 @@ class _OcrScreenState extends State<OcrScreen> {
       }
     } else if (lower.contains('flash') || lower.contains('light')) {
       await _toggleFlash();
+    } else if (lower.contains('back') || lower.contains('home') || lower.contains('exit') || lower.contains('close')) {
+      await voiceService.speak('Returning to main menu.');
+      if (mounted) Navigator.pop(context);
+    } else if (lower.contains('help') || lower.contains('guide')) {
+      await voiceService.speak('Available commands: say Capture to scan text, Repeat to hear text again, Flash to toggle flashlight, or Back to exit.');
+    } else {
+      await voiceService.speak('Command not recognized. Say Capture, Repeat, Flash, or Back.');
     }
   }
+
 
   Future<void> _processScan() async {
     if (isScanning) return;
@@ -313,15 +346,17 @@ class _OcrScreenState extends State<OcrScreen> {
                         ],
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: TextButton.icon(
-                        onPressed: _handleVoiceCommand,
-                        icon: const Icon(Icons.mic, size: 20),
-                        label: const Text('Voice Command Prompt'),
-                      ),
+                    const SizedBox(height: 10),
+                    VoiceButton(
+                      label: 'VOICE COMMAND',
+                      subtitle: 'Tap to speak: "Capture", "Read", or "Repeat"',
+                      activeSubtitle: 'Listening... say "Capture" or "Read"',
+                      isListening: isListening,
+                      onPressed: _handleVoiceCommand,
+                      primaryColor: const Color(0xFF1E293B),
+                      activeColor: Colors.teal.shade600,
                     ),
+                    const SizedBox(height: 6),
                   ],
                 ),
               ),

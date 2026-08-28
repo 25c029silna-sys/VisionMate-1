@@ -16,6 +16,8 @@ void main() {
     setUp(() {
       mockVoiceService = MockVoiceService();
       when(() => mockVoiceService.speak(any())).thenAnswer((_) async {});
+      when(() => mockVoiceService.listen()).thenAnswer((_) async => null);
+      when(() => mockVoiceService.listen(listenDurationSeconds: any(named: 'listenDurationSeconds'))).thenAnswer((_) async => null);
     });
 
     Widget createTestableWidget() {

@@ -1,57 +1,86 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class VoiceButton extends StatelessWidget {
   final String label;
+  final String? subtitle;
+  final String? activeSubtitle;
   final bool isListening;
   final VoidCallback onPressed;
+  final double? height;
+  final Color? primaryColor;
+  final Color? activeColor;
 
   const VoiceButton({
     super.key,
     this.label = 'TAP TO SPEAK',
+    this.subtitle,
+    this.activeSubtitle,
     this.isListening = false,
     required this.onPressed,
+    this.height,
+    this.primaryColor,
+    this.activeColor,
   });
 
   @override
   Widget build(BuildContext context) {
+    final subText = isListening
+        ? (activeSubtitle ?? 'Listening... Speak your command clearly')
+        : (subtitle ?? 'Tap anywhere on this button to speak');
+
+    final effectiveActiveColor = activeColor ?? const Color(0xFF2563EB);
+    final effectivePrimaryColor = primaryColor ?? const Color(0xFF1E293B);
+
     return Semantics(
       button: true,
-      label: isListening ? 'Voice Assistant is listening' : 'Activate Voice Command Button',
-      hint: 'Double tap to activate voice recognition',
+      label: isListening ? 'Voice Assistant is listening' : 'Activate Voice Command Button: $label',
+      hint: 'Double tap to activate voice recognition and speak commands',
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(24),
+          onTap: () {
+            try {
+              HapticFeedback.selectionClick();
+            } catch (_) {}
+            onPressed();
+          },
+          borderRadius: BorderRadius.circular(28),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 300),
-            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+            constraints: BoxConstraints(minHeight: height ?? 80),
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 22),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: isListening
-                    ? [const Color(0xFF2563EB), const Color(0xFF1D4ED8)]
-                    : [const Color(0xFF1E293B), const Color(0xFF0F172A)],
+                    ? [effectiveActiveColor, const Color(0xFF1D4ED8)]
+                    : [effectivePrimaryColor, const Color(0xFF0F172A)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(28),
               border: Border.all(
-                color: isListening ? const Color(0xFF60A5FA) : const Color(0xFF334155),
-                width: isListening ? 3 : 2,
+                color: isListening ? const Color(0xFF93C5FD) : const Color(0xFF475569),
+                width: isListening ? 3.5 : 2.5,
               ),
               boxShadow: isListening
                   ? [
                       BoxShadow(
-                        color: const Color(0xFF3B82F6).withAlpha((0.5 * 255).round()),
-                        blurRadius: 24,
-                        spreadRadius: 4,
+                        color: effectiveActiveColor.withAlpha((0.6 * 255).round()),
+                        blurRadius: 28,
+                        spreadRadius: 6,
+                      ),
+                      BoxShadow(
+                        color: Colors.white.withAlpha((0.2 * 255).round()),
+                        blurRadius: 10,
+                        spreadRadius: 2,
                       ),
                     ]
                   : [
                       BoxShadow(
-                        color: Colors.black.withAlpha((0.3 * 255).round()),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
+                        color: Colors.black.withAlpha((0.45 * 255).round()),
+                        blurRadius: 14,
+                        offset: const Offset(0, 5),
                       ),
                     ],
             ),
@@ -60,26 +89,28 @@ class VoiceButton extends StatelessWidget {
               children: [
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
-                  padding: const EdgeInsets.all(14),
+                  width: 64,
+                  height: 64,
                   decoration: BoxDecoration(
-                    color: isListening ? Colors.white : const Color(0xFF2563EB),
+                    color: isListening ? Colors.white : effectiveActiveColor,
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
                         color: isListening
-                            ? Colors.white.withAlpha((0.6 * 255).round())
-                            : const Color(0xFF2563EB).withAlpha((0.4 * 255).round()),
-                        blurRadius: 12,
+                            ? Colors.white.withAlpha((0.8 * 255).round())
+                            : effectiveActiveColor.withAlpha((0.5 * 255).round()),
+                        blurRadius: 16,
+                        spreadRadius: isListening ? 4 : 1,
                       ),
                     ],
                   ),
                   child: Icon(
                     isListening ? Icons.mic_rounded : Icons.mic_none_rounded,
                     color: isListening ? const Color(0xFF1D4ED8) : Colors.white,
-                    size: 36,
+                    size: 40,
                   ),
                 ),
-                const SizedBox(width: 18),
+                const SizedBox(width: 20),
                 Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -88,19 +119,20 @@ class VoiceButton extends StatelessWidget {
                       Text(
                         isListening ? 'LISTENING NOW...' : label,
                         style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
                           color: Colors.white,
-                          letterSpacing: 0.8,
+                          letterSpacing: 0.9,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 5),
                       Text(
-                        isListening ? 'Speak your command clearly' : 'Tap once for instant voice action',
+                        subText,
                         style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: isListening ? const Color(0xFF93C5FD) : const Color(0xFF94A3B8),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: isListening ? const Color(0xFFBFDBFE) : const Color(0xFFCBD5E1),
+                          height: 1.2,
                         ),
                       ),
                     ],
@@ -114,3 +146,4 @@ class VoiceButton extends StatelessWidget {
     );
   }
 }
+

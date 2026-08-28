@@ -156,6 +156,79 @@ void main() {
       expect(summary, contains('table, 2.1 meters on your left'));
       expect(summary, contains('door, 4.5 meters on your right'));
     });
+
+    test('estimateSensorFusedDistance calculates accurate fused distance with ground plane trigonometry', () {
+      final fusedDist = SceneService.estimateSensorFusedDistance(
+        label: 'chair',
+        heightNormalized: 0.40,
+        bottomNormalized: 0.90,
+        cameraHeightMeters: 1.40,
+        phonePitchAngleRadians: 0.15,
+      );
+      expect(fusedDist, greaterThan(0.5));
+      expect(fusedDist, lessThan(5.0));
+    });
+
+    test('generateCorridorNavigationGuidance advises correct steering path when obstacles block corridor', () {
+      // Obstacle in center corridor
+      final centerObstacle = DetectedObstacle(
+        label: 'chair',
+        confidence: 0.90,
+        x: 0.40,
+        y: 0.40,
+        width: 0.20,
+        height: 0.30,
+        distanceMeters: 1.5,
+        distanceCategory: 'medium',
+      );
+
+      final advice = sceneService.generateCorridorNavigationGuidance([centerObstacle]);
+      expect(advice, contains('Safe clearance on your right, step right.'));
+
+      // All clear
+      final clearAdvice = sceneService.generateCorridorNavigationGuidance([]);
+      expect(clearAdvice, contains('All corridors clear. Safe to proceed straight ahead.'));
+    });
+
+    test('filterTemporalConsensus confirms obstacles detected across multiple frames', () {
+      final frame1 = [
+        DetectedObstacle(
+          label: 'person',
+          confidence: 0.85,
+          x: 0.3,
+          y: 0.2,
+          width: 0.3,
+          height: 0.6,
+          distanceCategory: 'medium',
+        ),
+      ];
+
+      final frame2 = [
+        DetectedObstacle(
+          label: 'person',
+          confidence: 0.88,
+          x: 0.31,
+          y: 0.21,
+          width: 0.3,
+          height: 0.6,
+          distanceCategory: 'medium',
+        ),
+        DetectedObstacle(
+          label: 'glitch_box',
+          confidence: 0.45,
+          x: 0.8,
+          y: 0.8,
+          width: 0.1,
+          height: 0.1,
+          distanceCategory: 'close',
+        ),
+      ];
+
+      final consensus = SceneService.filterTemporalConsensus([frame1, frame2], minFrameCount: 2);
+      expect(consensus, hasLength(1));
+      expect(consensus.first.label, equals('person'));
+    });
   });
 }
+
 

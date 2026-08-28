@@ -307,10 +307,19 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
-      floatingActionButton: VoiceButton(
-        isListening: isListening,
-        onPressed: _activateVoiceRecognition,
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        child: VoiceButton(
+          label: 'TAP TO SPEAK COMMAND',
+          subtitle: 'Say "Braille", "OCR", "Library", "Scene", or "SOS"',
+          activeSubtitle: 'Listening... speak feature name or command',
+          isListening: isListening,
+          onPressed: _activateVoiceRecognition,
+          primaryColor: const Color(0xFF1E293B),
+          activeColor: const Color(0xFF2563EB),
+        ),
       ),
     );
   }
 }
+

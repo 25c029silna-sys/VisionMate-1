@@ -450,10 +450,116 @@ class SceneService {
     return 'Indoor navigation active. Path is clear.';
   }
 
+  /// Estimates distance fusing object optical geometry with ground-plane trigonometric projection.
+  static double estimateSensorFusedDistance({
+    required String label,
+    required double heightNormalized,
+    required double bottomNormalized,
+    double cameraHeightMeters = 1.40,
+    double phonePitchAngleRadians = 0.0, // 0 is horizontal, positive is tilting down
+  }) {
+    // 1. Pinhole height-based estimate
+    final pinholeDist = estimateDistanceMeters(label, heightNormalized);
+
+    // 2. Ground-plane intersection estimate (if bottom touches lower frame half)
+    if (bottomNormalized > 0.40) {
+      // Angular offset from optical center to object base
+      final normalizedOffset = (bottomNormalized - 0.50).clamp(0.01, 0.50);
+      final alphaAngle = normalizedOffset * (65.0 * pi / 180.0); // based on 65 deg vertical FOV
+      final totalAngle = phonePitchAngleRadians + alphaAngle;
+      if (totalAngle > 0.05) {
+        final groundDist = (cameraHeightMeters / tan(totalAngle)).clamp(0.3, 15.0);
+        // Weighted geometric fusion
+        final fused = (pinholeDist * 0.55) + (groundDist * 0.45);
+        return double.parse(fused.clamp(0.3, 15.0).toStringAsFixed(1));
+      }
+    }
+
+    return pinholeDist;
+  }
+
+  /// Evaluates 3 distinct field-of-view corridors (Left, Center, Right) and provides actionable steering advice.
+  String generateCorridorNavigationGuidance(List<DetectedObstacle> obstacles) {
+    if (obstacles.isEmpty) {
+      return 'All corridors clear. Safe to proceed straight ahead.';
+    }
+
+    bool leftBlocked = false;
+    bool centerBlocked = false;
+    bool rightBlocked = false;
+
+    for (final o in obstacles) {
+      if (o.distanceMeters <= 2.2) {
+        final centerX = o.x + (o.width / 2.0);
+        if (centerX < 0.35) {
+          leftBlocked = true;
+        } else if (centerX <= 0.65) {
+          centerBlocked = true;
+        } else {
+          rightBlocked = true;
+        }
+      }
+    }
+
+    if (!centerBlocked) {
+      return 'Path directly ahead is clear.';
+    }
+
+    if (!rightBlocked) {
+      return 'Obstacle ahead. Safe clearance on your right, step right.';
+    } else if (!leftBlocked) {
+      return 'Obstacle ahead. Safe clearance on your left, step left.';
+    } else {
+      return 'Caution: Pathway ahead is blocked on all sides. Please stop and reorient.';
+    }
+  }
+
+  /// Filters detections across consecutive frames to eliminate one-off false positives and temporal flickers.
+  static List<DetectedObstacle> filterTemporalConsensus(
+    List<List<DetectedObstacle>> frameHistory, {
+    int minFrameCount = 2,
+    double matchIoUThreshold = 0.30,
+  }) {
+    if (frameHistory.isEmpty) return [];
+    if (frameHistory.length == 1) return frameHistory.first;
+
+    final latestDetections = frameHistory.last;
+    final confirmed = <DetectedObstacle>[];
+
+    final previousFrames = frameHistory.sublist(0, frameHistory.length - 1);
+
+    for (final current in latestDetections) {
+      int occurrences = 1;
+      for (final pastFrame in previousFrames) {
+        for (final past in pastFrame) {
+          if (past.label == current.label) {
+            // Check bounding box spatial proximity
+            final xA = max(current.x, past.x);
+            final yA = max(current.y, past.y);
+            final xB = min(current.x + current.width, past.x + past.width);
+            final yB = min(current.y + current.height, past.y + past.height);
+            final inter = max(0.0, xB - xA) * max(0.0, yB - yA);
+            final union = (current.width * current.height) + (past.width * past.height) - inter;
+            if (union > 0 && (inter / union) >= matchIoUThreshold) {
+              occurrences++;
+              break;
+            }
+          }
+        }
+      }
+      if (occurrences >= minFrameCount) {
+        confirmed.add(current);
+      }
+    }
+
+    return confirmed;
+  }
+
   void dispose() {
     _tfliteHelper.dispose();
   }
 }
+
 
 
 

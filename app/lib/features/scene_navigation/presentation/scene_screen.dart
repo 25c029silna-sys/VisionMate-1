@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../core/voice/voice_service.dart';
 import '../../../core/camera/camera_service.dart';
 import '../../../core/permissions/permission_service.dart';
+import '../../../widgets/voice_button.dart';
 import '../domain/scene_service.dart';
 
 class SceneScreen extends StatefulWidget {
@@ -28,10 +29,11 @@ class _SceneScreenState extends State<SceneScreen> {
   late final CameraService cameraService;
   late final PermissionService permissionService;
 
-  String result = 'Point camera at your surroundings and tap Describe Surroundings.';
+  String result = 'Point camera at your surroundings and tap Describe Surroundings or say Describe.';
   bool isCameraReady = false;
   bool isAnalyzing = false;
   bool isFlashOn = false;
+  bool isListening = false;
 
   @override
   void initState() {
@@ -65,6 +67,9 @@ class _SceneScreenState extends State<SceneScreen> {
       await voiceService.speak(
         'Scene description activated. Point camera at surroundings and tap Describe Surroundings or say describe surroundings.',
       );
+      if (mounted) {
+        await _handleVoiceCommand();
+      }
     } catch (e) {
       debugPrint('SceneScreen camera init failed: $e');
       await voiceService.speak('Camera initialization failed. Returning to main menu.');
@@ -85,13 +90,35 @@ class _SceneScreenState extends State<SceneScreen> {
   }
 
   Future<void> _handleVoiceCommand() async {
-    final command = await voiceService.listen();
-    if (command == null || command.isEmpty) return;
+    if (isListening) {
+      await voiceService.stopListening();
+      if (mounted) {
+        setState(() {
+          isListening = false;
+        });
+      }
+      return;
+    }
 
-    final lower = command.toLowerCase();
+    if (mounted) {
+      setState(() {
+        isListening = true;
+      });
+    }
+
+    final command = await voiceService.listen();
+
+    if (!mounted) return;
+    setState(() {
+      isListening = false;
+    });
+
+    if (command == null || command.trim().isEmpty) return;
+
+    final lower = command.toLowerCase().trim();
     if (lower.contains('stop')) {
       await voiceService.speak('Stopping playback.');
-    } else if (lower.contains('describe') || lower.contains('surroundings') || lower.contains('scan') || lower.contains('navigate')) {
+    } else if (lower.contains('describe') || lower.contains('surroundings') || lower.contains('scan') || lower.contains('navigate') || lower.contains('explore')) {
       await _describeScene();
     } else if (lower.contains('repeat') || lower.contains('again')) {
       if (result.isNotEmpty) {
@@ -99,8 +126,16 @@ class _SceneScreenState extends State<SceneScreen> {
       }
     } else if (lower.contains('flash') || lower.contains('light')) {
       await _toggleFlash();
+    } else if (lower.contains('back') || lower.contains('home') || lower.contains('exit') || lower.contains('close')) {
+      await voiceService.speak('Returning to main menu.');
+      if (mounted) Navigator.pop(context);
+    } else if (lower.contains('help') || lower.contains('guide')) {
+      await voiceService.speak('Available commands: say Describe to analyze surroundings, Repeat to hear again, Flash to toggle flashlight, or Back to exit.');
+    } else {
+      await voiceService.speak('Command not recognized. Say Describe, Repeat, Flash, or Back.');
     }
   }
+
 
   Future<void> _describeScene() async {
     if (isAnalyzing) return;
@@ -264,15 +299,17 @@ class _SceneScreenState extends State<SceneScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: TextButton.icon(
-                        onPressed: _handleVoiceCommand,
-                        icon: const Icon(Icons.mic, size: 20),
-                        label: const Text('Voice Command Prompt'),
-                      ),
+                    const SizedBox(height: 10),
+                    VoiceButton(
+                      label: 'VOICE COMMAND',
+                      subtitle: 'Tap to speak: "Describe", "Repeat", or "Flash"',
+                      activeSubtitle: 'Listening... say "Describe" or "Flash"',
+                      isListening: isListening,
+                      onPressed: _handleVoiceCommand,
+                      primaryColor: const Color(0xFF1E293B),
+                      activeColor: Colors.teal.shade700,
                     ),
+                    const SizedBox(height: 6),
                   ],
                 ),
               ),

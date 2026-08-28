@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/storage/storage_service.dart';
 import '../../../core/voice/voice_service.dart';
+import '../../../widgets/voice_button.dart';
 import '../data/embedding_store.dart';
 import '../domain/library_service.dart';
 
@@ -31,6 +32,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
     _seedSampleDocumentsIfEmpty();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await voiceService.speak('Smart digital library activated. Speak your search query to search Braille documents and notes.');
+      if (mounted) {
+        await _searchLibrary();
+      }
     });
   }
 
@@ -116,21 +120,59 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _searchLibrary() async {
-    if (isSearching) return;
+    if (isSearching) {
+      await voiceService.stopListening();
+      if (mounted) {
+        setState(() {
+          isSearching = false;
+        });
+      }
+      return;
+    }
+
     setState(() {
       isSearching = true;
       status = 'Listening for your search query...';
     });
 
-    await voiceService.speak('Listening for your digital library search query.');
-    final query = await voiceService.listen();
+    final rawQuery = await voiceService.listen();
 
-    if (query == null || query.trim().isEmpty) {
+    if (!mounted) return;
+
+    if (rawQuery == null || rawQuery.trim().isEmpty) {
       setState(() {
         isSearching = false;
-        status = 'No query detected. Tap Search button to try again.';
+        status = 'No query detected. Tap Voice Search button to try again.';
       });
-      await voiceService.speak('No search query detected.');
+      return;
+    }
+
+    final query = rawQuery.trim();
+    final lower = query.toLowerCase();
+
+    if (lower == 'back' || lower == 'home' || lower == 'exit' || lower == 'close') {
+      setState(() {
+        isSearching = false;
+      });
+      await voiceService.speak('Returning to main menu.');
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+
+    if (lower.contains('add document') || lower.contains('add note') || lower == 'add') {
+      setState(() {
+        isSearching = false;
+      });
+      await voiceService.speak('Opening add document window.');
+      await _showAddDocumentDialog();
+      return;
+    }
+
+    if (lower.contains('help') || lower.contains('guide')) {
+      setState(() {
+        isSearching = false;
+      });
+      await voiceService.speak('Say any search term to find relevant notes and Braille documents, or say Add Note to create a document, or Back to exit.');
       return;
     }
 
@@ -139,6 +181,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     });
 
     final results = await libraryService.searchBySpokenQuery(query, topK: 5);
+
+    if (!mounted) return;
 
     setState(() {
       searchResults = results;
@@ -155,6 +199,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await voiceService.speak('No matching documents found in your library.');
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -217,26 +262,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
             const SizedBox(height: 16),
 
             // Search Trigger Button
-            SizedBox(
-              height: 56,
-              child: ElevatedButton.icon(
-                onPressed: isSearching ? null : _searchLibrary,
-                icon: Icon(
-                  isSearching ? Icons.mic_rounded : Icons.mic_none_rounded,
-                  size: 28,
-                ),
-                label: Text(
-                  isSearching ? 'Listening...' : 'Voice Search Library',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.purpleAccent,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-              ),
+            VoiceButton(
+              label: 'VOICE SEARCH LIBRARY',
+              subtitle: 'Tap to speak your query (e.g., "Navigation", "SOS")',
+              activeSubtitle: 'Listening... speak your search query now',
+              isListening: isSearching,
+              onPressed: _searchLibrary,
+              primaryColor: const Color(0xFF1E293B),
+              activeColor: Colors.purple.shade700,
             ),
             const SizedBox(height: 12),
 
