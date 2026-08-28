@@ -3,20 +3,15 @@ allprojects {
         google()
         mavenCentral()
     }
-    tasks.withType<JavaCompile>().configureEach {
-        sourceCompatibility = "17"
-        targetCompatibility = "17"
-    }
-    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        }
-    }
 }
-rootProject.layout.buildDirectory.value(rootProject.layout.projectDirectory.dir("../build"))
+
+// Build directory configuration on system temp drive to prevent drive H filesystem lock issues
+val localTempBuildDir = File(System.getProperty("java.io.tmpdir"), "visionmate_build")
+rootProject.layout.buildDirectory.set(localTempBuildDir)
 subprojects {
-    project.layout.buildDirectory.value(rootProject.layout.buildDirectory.dir(project.name))
+    project.layout.buildDirectory.set(rootProject.layout.buildDirectory.map { it.dir(project.name) })
 }
+
 subprojects {
     tasks.withType<JavaCompile>().configureEach {
         sourceCompatibility = "17"
@@ -53,3 +48,4 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+

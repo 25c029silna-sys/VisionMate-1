@@ -9,7 +9,7 @@ android {
     namespace = "com.visionmate.visionmate"
     compileSdk = flutter.compileSdkVersion
     buildToolsVersion = "35.0.0"
-    ndkVersion = flutter.ndkVersion
+    // ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
