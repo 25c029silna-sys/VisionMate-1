@@ -32,8 +32,13 @@ class TfliteHelper {
         }
       }
 
-      _interpreter = await Interpreter.fromAsset(assetPath);
-      _isModelAvailable = true;
+      try {
+        _interpreter = Interpreter.fromBuffer(bytes);
+      } catch (e) {
+        debugPrint('TfliteHelper: Interpreter.fromBuffer failed, trying Interpreter.fromAsset: $e');
+        _interpreter = await Interpreter.fromAsset(assetPath);
+      }
+      _isModelAvailable = _interpreter != null;
       return _interpreter;
     } catch (e, stackTrace) {
       _isModelAvailable = false;

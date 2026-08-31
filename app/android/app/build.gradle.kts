@@ -8,8 +8,11 @@ plugins {
 android {
     namespace = "com.visionmate.visionmate"
     compileSdk = flutter.compileSdkVersion
-    buildToolsVersion = "35.0.0"
-    // ndkVersion = flutter.ndkVersion
+    ndkVersion = "28.2.13676358"
+
+    androidResources {
+        noCompress += listOf("tflite", "lite")
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -25,6 +28,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        externalNativeBuild {
+            cmake {
+                arguments("-DANDROID_PLATFORM=android-24", "-DCMAKE_SYSTEM_VERSION=24")
+            }
+        }
     }
 
     buildTypes {

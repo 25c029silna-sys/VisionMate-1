@@ -5,11 +5,12 @@ allprojects {
     }
 }
 
-// Build directory configuration on system temp drive to prevent drive H filesystem lock issues
-val localTempBuildDir = File(System.getProperty("java.io.tmpdir"), "visionmate_build")
-rootProject.layout.buildDirectory.set(localTempBuildDir)
+val newBuildDir: Directory = rootProject.layout.buildDirectory.dir("../../build").get()
+rootProject.layout.buildDirectory.value(newBuildDir)
+
 subprojects {
-    project.layout.buildDirectory.set(rootProject.layout.buildDirectory.map { it.dir(project.name) })
+    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
+    project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 
 subprojects {
@@ -30,6 +31,7 @@ subprojects {
             defaultConfig {
                 minSdk = 24
             }
+            ndkVersion = "28.2.13676358"
         }
     }
     plugins.withId("com.android.library") {
@@ -37,6 +39,7 @@ subprojects {
             defaultConfig {
                 minSdk = 24
             }
+            ndkVersion = "28.2.13676358"
         }
     }
 }
