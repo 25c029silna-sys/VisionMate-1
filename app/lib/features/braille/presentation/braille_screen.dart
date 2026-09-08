@@ -173,6 +173,8 @@ class _BrailleScreenState extends State<BrailleScreen> {
 
       final pdfFile = await brailleService.exportBrailleTextToPdf(result, title: docTitle);
       
+      if (!mounted) return;
+
       // Index the Braille PDF into the Digital Library vector store for semantic search
       try {
         final storage = Provider.of<StorageService>(context, listen: false);

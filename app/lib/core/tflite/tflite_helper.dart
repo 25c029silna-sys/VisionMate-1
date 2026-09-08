@@ -40,7 +40,7 @@ class TfliteHelper {
       }
       _isModelAvailable = _interpreter != null;
       return _interpreter;
-    } catch (e, stackTrace) {
+    } catch (e) {
       _isModelAvailable = false;
       debugPrint('TfliteHelper error: Failed to load TFLite model from asset "$assetPath": $e');
       return null;

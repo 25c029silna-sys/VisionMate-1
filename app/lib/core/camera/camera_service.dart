@@ -26,7 +26,7 @@ class CameraService {
         backCamera,
         resolution,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
+        imageFormatGroup: ImageFormatGroup.yuv420,
       );
 
       await _controller!.initialize();

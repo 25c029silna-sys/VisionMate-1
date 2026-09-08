@@ -5,15 +5,18 @@ import 'package:image/image.dart' as img;
 import '../../../core/pdf/pdf_service.dart';
 import '../../../core/tflite/tflite_helper.dart';
 import '../data/braille_preprocessor.dart';
+import 'yolo_braille_decoder.dart';
 
 class BrailleService {
   final TfliteHelper _tfliteHelper = TfliteHelper();
   final BraillePreprocessor _preprocessor = BraillePreprocessor();
   final PdfService pdfService = PdfService();
   bool _isModelAvailable = false;
+  bool _isYoloModel = false;
   List<String> _labels = [];
 
   bool get isModelAvailable => _isModelAvailable;
+  bool get isYoloModel => _isYoloModel;
 
   /// Default 64-class Braille cell character map dictionary fallback (matching 6-dot binary order).
   static const List<String> defaultBrailleDictionary = [
@@ -28,8 +31,19 @@ class BrailleService {
   ];
 
   Future<bool> checkModelAvailability() async {
-    final interpreter = await _tfliteHelper.loadModel('assets/models/braille_cnn.tflite');
+    // 1. Try loading high-accuracy pretrained YOLOv8 Braille Object Detector
+    var interpreter = await _tfliteHelper.loadModel('assets/models/yolov8_braille.tflite');
+    if (interpreter != null) {
+      _isModelAvailable = true;
+      _isYoloModel = true;
+      debugPrint('BrailleService: Pre-trained YOLOv8 Braille Object Detector loaded successfully.');
+      return true;
+    }
+
+    // 2. Fallback to CNN patch classifier
+    interpreter = await _tfliteHelper.loadModel('assets/models/braille_cnn.tflite');
     _isModelAvailable = interpreter != null;
+    _isYoloModel = false;
     await _loadLabels();
     return _isModelAvailable;
   }
@@ -37,9 +51,10 @@ class BrailleService {
   Future<void> _loadLabels() async {
     try {
       final labelsData = await rootBundle.loadString('assets/labels/braille_labels.txt');
-      final loaded = labelsData.split('\n').map((l) => l.trimRight()).toList();
+      final loaded = labelsData.split('\n').map((l) => l.replaceAll('\r', '')).toList();
       if (loaded.isNotEmpty) {
-        _labels = loaded;
+        if (loaded[0].isEmpty) loaded[0] = ' ';
+        _labels = loaded.length >= 64 ? loaded.sublist(0, 64) : loaded;
         return;
       }
     } catch (e) {
@@ -62,19 +77,27 @@ class BrailleService {
       }
 
       final bytes = await file.readAsBytes();
-      final image = img.decodeImage(bytes);
-      if (image == null) {
+      final rawImage = img.decodeImage(bytes);
+      if (rawImage == null) {
         debugPrint('Failed to decode image at $imagePath.');
         return 'Could not decode image format.';
       }
+      // Auto-orient based on smartphone camera EXIF metadata (fixes 90-deg rotated photos)
+      final image = img.bakeOrientation(rawImage);
 
       if (hasModel && _tfliteHelper.interpreter != null) {
+        if (_isYoloModel) {
+          final recognizedText = await _processImageAndRunYoloInference(image);
+          final cleanedText = recognizedText.replaceAll('?', '').replaceAll(' ', '').trim();
+          return cleanedText.isNotEmpty ? recognizedText : 'No Braille text detected. Please align camera over a Braille page.';
+        }
+
         final List<int> detectedCellIndices = await _processImageAndRunInference(image);
         if (detectedCellIndices.isEmpty) {
           return 'No Braille text detected. Please align camera over a Braille page.';
         }
         final recognizedText = assembleBrailleText(detectedCellIndices);
-        final cleanedText = recognizedText.replaceAll('?', '').trim();
+        final cleanedText = recognizedText.replaceAll('?', '').replaceAll(' ', '').trim();
         return cleanedText.isNotEmpty ? recognizedText : 'No Braille text detected. Please align camera over a Braille page.';
       } else {
         // Fallback: Pure Dart cell grid & 6-dot heuristic analysis
@@ -83,7 +106,7 @@ class BrailleService {
           return 'No Braille text detected. Please align camera over a Braille page.';
         }
         final recognizedText = assembleBrailleFromCells(cells);
-        final cleanedText = recognizedText.replaceAll('?', '').trim();
+        final cleanedText = recognizedText.replaceAll('?', '').replaceAll(' ', '').trim();
         return cleanedText.isNotEmpty ? recognizedText : 'No Braille text detected. Please align camera over a Braille page.';
       }
     } catch (e, stack) {
@@ -170,6 +193,94 @@ class BrailleService {
     return await pdfService.generatePdfFromText(title: title, textContent: textContent);
   }
 
+  /// Scales image to 640x640, automatically finds the optimal reading orientation (0°, 90°, 180°, 270°),
+  /// and runs YOLOv8 Braille object detection.
+  Future<String> _processImageAndRunYoloInference(img.Image originalImage) async {
+    final interpreter = _tfliteHelper.interpreter!;
+
+    List<dynamic> bestOutput = [];
+    double bestScore = -1.0;
+
+    // Evaluate 4 possible camera orientations (0°, 270°, 90°, 180°)
+    // Selects the orientation with the highest total Braille character detection confidence.
+    final candidateAngles = [0, 270, 90, 180];
+
+    for (final angle in candidateAngles) {
+      img.Image currentImage = originalImage;
+      if (angle != 0) {
+        currentImage = img.copyRotate(originalImage, angle: angle);
+      }
+
+      final resized = img.copyResize(currentImage, width: 640, height: 640);
+
+      final inputTensor = List.generate(
+        1,
+        (_) => List.generate(
+          640,
+          (y) => List.generate(
+            640,
+            (x) {
+              final pixel = resized.getPixel(x, y);
+              return [
+                pixel.r / 255.0,
+                pixel.g / 255.0,
+                pixel.b / 255.0,
+              ];
+            },
+          ),
+        ),
+      );
+
+      final outputTensor = List.generate(
+        1,
+        (_) => List.generate(68, (_) => List.filled(8400, 0.0)),
+      );
+
+      interpreter.run(inputTensor, outputTensor);
+
+      // Score this orientation: sum confidence of all candidate detections >= 0.30
+      double currentScore = 0.0;
+      int detectionCount = 0;
+      final rawOut = outputTensor[0] as List;
+      for (int i = 0; i < 8400; i++) {
+        double maxProb = 0.0;
+        int maxCls = 0;
+        for (int c = 1; c < 64; c++) {
+          final prob = (rawOut[4 + c][i] as num).toDouble();
+          if (prob > maxProb) {
+            maxProb = prob;
+            maxCls = c;
+          }
+        }
+        if (maxProb >= 0.30 && maxCls > 0) {
+          currentScore += maxProb;
+          detectionCount++;
+        }
+      }
+
+      if (currentScore > bestScore) {
+        bestScore = currentScore;
+        bestOutput = outputTensor;
+      }
+
+      // If upright orientation (0°) has strong detections (> 70 high-confidence characters), stop early
+      if (angle == 0 && detectionCount > 70) {
+        break;
+      }
+    }
+
+    if (bestOutput.isEmpty) {
+      return '';
+    }
+
+    // Decode detections with NMS, line clustering, and reading-order reconstruction
+    return YoloBrailleDecoder.decodeYoloOutput(
+      bestOutput,
+      confidenceThreshold: 0.30,
+      iouThreshold: 0.40,
+    );
+  }
+
   /// Scales image to standard resolution, detects Braille dot/cell regions, and runs TFLite inference.
   Future<List<int>> _processImageAndRunInference(img.Image originalImage) async {
     final interpreter = _tfliteHelper.interpreter!;
@@ -218,6 +329,7 @@ class BrailleService {
 
         final resizedPatch = img.copyResize(patch, width: 28, height: 28);
 
+        final List<double> luminances = [];
         double minLum = 255.0;
         double maxLum = 0.0;
 
@@ -230,6 +342,7 @@ class BrailleService {
               (x) {
                 final pixel = resizedPatch.getPixel(x, y);
                 final luminance = img.getLuminance(pixel).toDouble();
+                luminances.add(luminance);
                 if (luminance < minLum) minLum = luminance;
                 if (luminance > maxLum) maxLum = luminance;
                 return [luminance];
@@ -238,10 +351,26 @@ class BrailleService {
           ),
         );
 
-        // Require minimum luminance variance (35 out of 255) within cell patch to avoid background noise
-        double patchContrast = maxLum - minLum;
-        if (patchContrast < 35.0) {
+        final double patchContrast = maxLum - minLum;
+        // Flat paper or uniform surface has near-zero contrast
+        if (patchContrast < 22.0) {
           cellIndices.add(0); // 0 maps to empty space ' '
+          continue;
+        }
+
+        // Statistical peak-to-background ratio filter:
+        // Real Braille cells have smooth paper background with localized embossed dot peaks (ratio >= 2.3).
+        // Textured non-Braille surfaces (wood grain, fabric, carpet) have uniform roughness (ratio < 2.2).
+        luminances.sort();
+        final double medianLum = luminances[392];
+        final List<double> diffs = luminances.map((l) => (l - medianLum).abs()).toList();
+        diffs.sort();
+        final double bgRoughness = diffs[392]; // 50th percentile (background deviation)
+        final double dotPeak = diffs[744];    // 95th percentile (dot bump contrast)
+        final double peakToBgRatio = dotPeak / (bgRoughness + 0.001);
+
+        if (peakToBgRatio < 2.3) {
+          cellIndices.add(0); // Reject non-Braille textures
           continue;
         }
 
@@ -258,8 +387,7 @@ class BrailleService {
           }
         }
 
-        // Require at least 0.35 confidence for a non-space Braille character class
-        if (bestClass == 0 || maxProb < 0.35) {
+        if (bestClass == 0 || maxProb < 0.50) {
           cellIndices.add(0);
         } else {
           cellIndices.add(bestClass);
@@ -273,8 +401,8 @@ class BrailleService {
       }
     }
 
-    // Require at least 2 valid character detections to consider the photo a Braille image
-    if (totalDetectedNonSpaceCount < 2) {
+    // Return empty if no valid non-space Braille cells were found
+    if (totalDetectedNonSpaceCount < 1) {
       return [];
     }
 
@@ -283,9 +411,11 @@ class BrailleService {
 
   /// Maps a class index (0..63) to its corresponding Braille character.
   String mapIndexToCharacter(int index) {
+    if (index == 0) return ' ';
     final activeList = _labels.isNotEmpty ? _labels : defaultBrailleDictionary;
     if (index >= 0 && index < activeList.length) {
-      return activeList[index];
+      final ch = activeList[index];
+      return ch.isEmpty ? ' ' : ch;
     }
     return '?';
   }
