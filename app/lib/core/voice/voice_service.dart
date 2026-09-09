@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'command_router.dart';
 
 class VoiceService extends ChangeNotifier {
   final FlutterTts _tts = FlutterTts();
@@ -14,6 +15,7 @@ class VoiceService extends ChangeNotifier {
 
   bool get isSpeaking => _isSpeaking;
   bool get isListening => _isListening;
+  bool get isWakeWordListening => false;
 
   VoiceService() {
     _tts.setSpeechRate(0.45);
@@ -74,6 +76,7 @@ class VoiceService extends ChangeNotifier {
 
   /// Listens for spoken input from microphone.
   /// Automatically stops TTS, triggers haptic vibration feedback, and collects recognized speech.
+  /// Single-session: releases the microphone immediately upon completion or timeout.
   Future<String?> listen({int listenDurationSeconds = 6}) async {
     if (_isSpeaking) {
       await _tts.stop();
@@ -127,7 +130,74 @@ class VoiceService extends ChangeNotifier {
       }
     });
 
-    return completer.future;
+    final result = await completer.future;
+    _isListening = false;
+    notifyListeners();
+    return result;
+  }
+
+  /// Dedicated fast listener for emergency SOS cancellation within a timeout (default 3s).
+  /// Listens for words like 'cancel', 'stop', 'abort', 'wait', 'no'.
+  /// Returns `true` if cancellation word is detected, `false` if timeout expires without cancellation.
+  Future<bool> listenForCancellation({Duration duration = const Duration(seconds: 3)}) async {
+    final available = await _speech.initialize(
+      onError: (val) => debugPrint('Cancellation STT Error: $val'),
+      onStatus: (val) => debugPrint('Cancellation STT Status: $val'),
+    );
+
+    if (!available) {
+      return false;
+    }
+
+    try {
+      HapticFeedback.heavyImpact();
+    } catch (_) {}
+
+    final completer = Completer<bool>();
+    _isListening = true;
+    notifyListeners();
+
+    await _speech.listen(
+      onResult: (event) {
+        if (CommandRouter.isCancellationCommand(event.recognizedWords)) {
+          if (!completer.isCompleted) {
+            _speech.stop();
+            _isListening = false;
+            notifyListeners();
+            completer.complete(true);
+          }
+        }
+      },
+      listenFor: duration,
+      pauseFor: const Duration(seconds: 1),
+    );
+
+    Timer(duration, () {
+      if (!completer.isCompleted) {
+        _speech.stop();
+        _isListening = false;
+        notifyListeners();
+        completer.complete(false);
+      }
+    });
+
+    final cancelled = await completer.future;
+    _isListening = false;
+    notifyListeners();
+    return cancelled;
+  }
+
+  /// Continuous wake-word standby is disabled to eliminate audio focus locking,
+  /// recurring beeps, camera pipeline conflicts, and rapid battery drain.
+  Future<void> startWakeWordListener({
+    required Function(String wakeWord, String? chainedCommand) onWakeWord,
+  }) async {
+    // Disabled: System SpeechRecognizer cannot be safely run in an infinite loop on mobile.
+  }
+
+  /// Stops wake word listener (no-op while continuous listening is disabled).
+  Future<void> stopWakeWordListener() async {
+    // No-op
   }
 
   Future<void> stopListening() async {

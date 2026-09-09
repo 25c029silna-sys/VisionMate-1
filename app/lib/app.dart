@@ -15,6 +15,8 @@ import 'widgets/feature_card.dart';
 import 'widgets/voice_button.dart';
 import 'widgets/voice_command_guide.dart';
 
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+
 class VisionMateApp extends StatelessWidget {
   const VisionMateApp({super.key});
 
@@ -30,6 +32,7 @@ class VisionMateApp extends StatelessWidget {
         builder: (context) {
           return GlobalShakeWrapper(
             child: MaterialApp(
+              navigatorKey: rootNavigatorKey,
               title: 'VisionMate',
               debugShowCheckedModeBanner: false,
               theme: ThemeData.dark().copyWith(
@@ -66,18 +69,22 @@ class GlobalShakeWrapper extends StatefulWidget {
 
 class _GlobalShakeWrapperState extends State<GlobalShakeWrapper> {
   final ShakeDetectorService _shakeDetector = ShakeDetectorService();
+  late VoiceService _voiceService;
+  late StorageService _storageService;
 
   @override
   void initState() {
     super.initState();
+    _voiceService = Provider.of<VoiceService>(context, listen: false);
+    _storageService = Provider.of<StorageService>(context, listen: false);
+
+    // Gesture-triggered SOS with 3-second voice cancellation window
     _shakeDetector.startListening(() async {
       if (!mounted) return;
-      final voiceService = Provider.of<VoiceService>(context, listen: false);
-      final storageService = Provider.of<StorageService>(context, listen: false);
       final emergencyService = EmergencyService();
       await emergencyService.executeGlobalSos(
-        storageService: storageService,
-        voiceService: voiceService,
+        storageService: _storageService,
+        voiceService: _voiceService,
       );
     });
   }
@@ -104,7 +111,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late final VoiceService voiceService;
   late final CommandRouter router;
-  String status = 'Tap the Voice Button below to give a command, or shake 3 times for SOS.';
+  String status = 'Voice ready. Tap microphone or shake for SOS.';
   bool isListening = false;
 
   @override
@@ -112,29 +119,38 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     voiceService = Provider.of<VoiceService>(context, listen: false);
     router = Provider.of<CommandRouter>(context, listen: false);
+
+    // Auto-activate voice input at app startup
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await voiceService.speak(
-        'Welcome to VisionMate. Tap the voice button to give a command, or shake device 3 times for Emergency SOS.',
+        'Welcome to VisionMate. Listening for your command...',
+        awaitCompletion: true,
       );
+      if (mounted) {
+        await _activateVoiceRecognition();
+      }
     });
   }
 
   Future<void> _activateVoiceRecognition() async {
     if (isListening) {
       await voiceService.stopListening();
-      setState(() {
-        isListening = false;
-        status = 'Voice listening canceled.';
-      });
+      if (mounted) {
+        setState(() {
+          isListening = false;
+          status = 'Voice listening paused. Tap microphone button to speak.';
+        });
+      }
       return;
     }
 
-    setState(() {
-      isListening = true;
-      status = 'Listening for voice command... Speak now.';
-    });
+    if (mounted) {
+      setState(() {
+        isListening = true;
+        status = 'Listening for voice command... Speak now.';
+      });
+    }
 
-    await voiceService.speak('Listening. State your command.');
     final command = await voiceService.listen(listenDurationSeconds: 5);
 
     if (!mounted) return;
@@ -149,6 +165,16 @@ class _HomeScreenState extends State<HomeScreen> {
         status = 'Heard: "$text"';
       });
 
+      // Check if user just said the wake word alone
+      if (CommandRouter.containsWakeWord(text) &&
+          CommandRouter.extractCommandAfterWakeWord(text).isEmpty) {
+        await voiceService.speak('I am listening. State a feature name like Braille, OCR, Library, Scene, or SOS.');
+        if (mounted) {
+          await _activateVoiceRecognition();
+        }
+        return;
+      }
+
       final route = router.routeForCommand(text);
       if (route != null) {
         if (route == '/guide') {
@@ -161,13 +187,12 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         }
       } else {
-        await voiceService.speak('Command not recognized. Tap the voice button to try again or say Guide for commands.');
+        await voiceService.speak('Command not recognized. Tap the voice button, say VisionMate, or say Guide for help.');
       }
     } else {
       setState(() {
-        status = 'No voice input detected. Tap button to try again.';
+        status = 'No voice input detected. Say "VisionMate" or tap button to speak.';
       });
-      await voiceService.speak('No command heard. Tap the button to speak again.');
     }
   }
 

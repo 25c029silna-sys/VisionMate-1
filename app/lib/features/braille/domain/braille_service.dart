@@ -1,10 +1,12 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import '../../../core/pdf/pdf_service.dart';
 import '../../../core/tflite/tflite_helper.dart';
 import '../data/braille_preprocessor.dart';
+import 'braille_text_refiner.dart';
 import 'yolo_braille_decoder.dart';
 
 class BrailleService {
@@ -88,8 +90,9 @@ class BrailleService {
       if (hasModel && _tfliteHelper.interpreter != null) {
         if (_isYoloModel) {
           final recognizedText = await _processImageAndRunYoloInference(image);
-          final cleanedText = recognizedText.replaceAll('?', '').replaceAll(' ', '').trim();
-          return cleanedText.isNotEmpty ? recognizedText : 'No Braille text detected. Please align camera over a Braille page.';
+          final refinedText = BrailleTextRefiner.refineOffline(recognizedText);
+          final cleanedText = refinedText.replaceAll('?', '').replaceAll(' ', '').trim();
+          return cleanedText.isNotEmpty ? refinedText : 'No Braille text detected. Please align camera over a Braille page.';
         }
 
         final List<int> detectedCellIndices = await _processImageAndRunInference(image);
@@ -193,7 +196,26 @@ class BrailleService {
     return await pdfService.generatePdfFromText(title: title, textContent: textContent);
   }
 
-  /// Scales image to 640x640, automatically finds the optimal reading orientation (0°, 90°, 180°, 270°),
+  /// Letterboxes [src] to [targetWidth] x [targetHeight] by maintaining its aspect ratio
+  /// and padding the remaining canvas with neutral gray (114, 114, 114).
+  /// Preserves Braille cell topology and prevents aspect-ratio distortion across orientations.
+  static img.Image letterbox(img.Image src, int targetWidth, int targetHeight) {
+    final double scale = min(targetWidth / src.width, targetHeight / src.height);
+    final int newW = (src.width * scale).round();
+    final int newH = (src.height * scale).round();
+
+    final resized = img.copyResize(src, width: newW, height: newH);
+    final canvas = img.Image(width: targetWidth, height: targetHeight);
+    img.fill(canvas, color: img.ColorRgb8(114, 114, 114));
+
+    final int padX = ((targetWidth - newW) / 2).round();
+    final int padY = ((targetHeight - newH) / 2).round();
+
+    img.compositeImage(canvas, resized, dstX: padX, dstY: padY);
+    return canvas;
+  }
+
+  /// Evaluates 4 camera orientations (0°, 270°, 90°, 180°), normalizes topology with letterbox,
   /// and runs YOLOv8 Braille object detection.
   Future<String> _processImageAndRunYoloInference(img.Image originalImage) async {
     final interpreter = _tfliteHelper.interpreter!;
@@ -211,7 +233,8 @@ class BrailleService {
         currentImage = img.copyRotate(originalImage, angle: angle);
       }
 
-      final resized = img.copyResize(currentImage, width: 640, height: 640);
+      // Preserve Braille cell aspect ratio and topology using letterbox padding
+      final resized = letterbox(currentImage, 640, 640);
 
       final inputTensor = List.generate(
         1,

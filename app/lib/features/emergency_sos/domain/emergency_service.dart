@@ -65,10 +65,11 @@ class EmergencyService {
     return 'Emergency alert: I need help. My location is https://maps.google.com/?q=${position.latitude},${position.longitude} (${position.latitude}, ${position.longitude}).';
   }
 
-  /// Triggers full emergency workflow globally from anywhere in the app or lock screen.
-  Future<void> executeGlobalSos({
+  /// Triggers full emergency workflow globally with a 3-second cancellation window via voice input.
+  Future<bool> executeGlobalSos({
     required dynamic storageService,
     required dynamic voiceService,
+    Duration cancellationWindow = const Duration(seconds: 3),
   }) async {
     final contact = await storageService.getTrustedContact();
     final String phone = contact['phone'] ?? '';
@@ -78,10 +79,24 @@ class EmergencyService {
       await voiceService.speak(
         'Emergency SOS triggered by shake gesture, but no trusted contact is saved. Please configure a contact in Emergency SOS.',
       );
-      return;
+      return false;
     }
 
-    await voiceService.speak('Emergency SOS activated by 3-shake gesture. Obtaining location and sending alert to $name.');
+    // 1. Announce SOS activation with 3-second voice cancellation prompt
+    await voiceService.speak(
+      'Emergency SOS activated by shake gesture. Say CANCEL within 3 seconds to cancel.',
+      awaitCompletion: true,
+    );
+
+    // 2. Listen for voice cancellation ('cancel', 'stop', 'abort', 'wait', 'no')
+    final wasCancelled = await voiceService.listenForCancellation(duration: cancellationWindow);
+    if (wasCancelled) {
+      await voiceService.speak('Emergency SOS cancelled. No alert was sent.');
+      return false;
+    }
+
+    // 3. If not cancelled within 3 seconds, proceed with dispatch
+    await voiceService.speak('Sending emergency alert to $name.');
 
     try {
       final position = await fetchLocation();
@@ -89,9 +104,11 @@ class EmergencyService {
       await sendSos(phone, message);
       await voiceService.speak('Emergency SMS sent. Calling $name.');
       await makePhoneCall(phone);
+      return true;
     } catch (e) {
       await voiceService.speak('Emergency alert encountered an issue. Placing phone call directly.');
       await makePhoneCall(phone);
+      return true;
     }
   }
 }

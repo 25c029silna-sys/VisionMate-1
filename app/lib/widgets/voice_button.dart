@@ -32,6 +32,13 @@ class VoiceButton extends StatelessWidget {
     final effectiveActiveColor = activeColor ?? const Color(0xFF2563EB);
     final effectivePrimaryColor = primaryColor ?? const Color(0xFF1E293B);
 
+    final isCompact = height != null && height! < 75;
+    final effectiveMinHeight = height ?? 80.0;
+    final verticalPadding = isCompact ? 10.0 : 20.0;
+    final horizontalPadding = isCompact ? 16.0 : 22.0;
+    final iconBoxSize = isCompact ? 40.0 : 64.0;
+    final iconSize = isCompact ? 24.0 : 40.0;
+
     return Semantics(
       button: true,
       label: isListening ? 'Voice Assistant is listening' : 'Activate Voice Command Button: $label',
@@ -48,8 +55,8 @@ class VoiceButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(28),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 300),
-            constraints: BoxConstraints(minHeight: height ?? 80),
-            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 22),
+            constraints: BoxConstraints(minHeight: effectiveMinHeight),
+            padding: EdgeInsets.symmetric(vertical: verticalPadding, horizontal: horizontalPadding),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: isListening
@@ -89,8 +96,8 @@ class VoiceButton extends StatelessWidget {
               children: [
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
-                  width: 64,
-                  height: 64,
+                  width: iconBoxSize,
+                  height: iconBoxSize,
                   decoration: BoxDecoration(
                     color: isListening ? Colors.white : effectiveActiveColor,
                     shape: BoxShape.circle,
@@ -107,10 +114,10 @@ class VoiceButton extends StatelessWidget {
                   child: Icon(
                     isListening ? Icons.mic_rounded : Icons.mic_none_rounded,
                     color: isListening ? const Color(0xFF1D4ED8) : Colors.white,
-                    size: 40,
+                    size: iconSize,
                   ),
                 ),
-                const SizedBox(width: 20),
+                SizedBox(width: isCompact ? 12 : 20),
                 Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,

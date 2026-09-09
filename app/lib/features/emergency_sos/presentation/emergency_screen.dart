@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/voice/voice_service.dart';
@@ -22,6 +23,9 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   String contactPhone = '';
   bool isLoadingContact = true;
   bool isListening = false;
+  bool isCountingDown = false;
+  int countdownSeconds = 3;
+  Timer? _countdownTimer;
 
   @override
   void initState() {
@@ -37,6 +41,12 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     });
   }
 
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadTrustedContact() async {
     final contact = await storageService.getTrustedContact();
     setState(() {
@@ -47,6 +57,11 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   }
 
   Future<void> _handleVoiceCommand() async {
+    if (isCountingDown) {
+      await _cancelSos();
+      return;
+    }
+
     if (isListening) {
       await voiceService.stopListening();
       if (mounted) {
@@ -146,34 +161,108 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     );
   }
 
+  /// Cancels an active emergency SOS countdown.
+  Future<void> _cancelSos() async {
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+    await voiceService.stopListening();
+
+    if (mounted) {
+      setState(() {
+        isCountingDown = false;
+        countdownSeconds = 3;
+        status = 'Emergency SOS request cancelled by user.';
+      });
+    }
+
+    await voiceService.speak('Emergency SOS cancelled. No alert was sent.');
+  }
 
   Future<void> _triggerSos() async {
+    if (isCountingDown) return;
+
     if (contactPhone.isEmpty) {
       await voiceService.speak('No trusted contact configured. Please add a trusted contact first.');
       await _showAddContactDialog();
       if (contactPhone.isEmpty) return;
     }
 
-    await voiceService.speak('Triggering emergency alert. Fetching GPS coordinates.');
+    // Enter 3-second cancellation countdown state
+    setState(() {
+      isCountingDown = true;
+      countdownSeconds = 3;
+      status = 'EMERGENCY SOS ACTIVATED. Say "CANCEL" within 3 seconds to cancel.';
+    });
+
+    // Announce 3-second cancellation window
+    await voiceService.speak(
+      'Emergency SOS activated. Say CANCEL within 3 seconds to cancel.',
+      awaitCompletion: false,
+    );
+
+    // Start 1-second periodic timer for visual and state countdown
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      if (countdownSeconds > 1) {
+        setState(() {
+          countdownSeconds--;
+          status = 'EMERGENCY SOS: $countdownSeconds seconds remaining to cancel (Say "CANCEL").';
+        });
+      } else {
+        timer.cancel();
+        _countdownTimer = null;
+        if (isCountingDown) {
+          _executeSosDispatch();
+        }
+      }
+    });
+
+    // Concurrently listen for voice cancellation ('cancel', 'stop', 'abort', 'wait', 'no')
+    final wasCancelled = await voiceService.listenForCancellation(duration: const Duration(seconds: 3));
+    if (wasCancelled && isCountingDown) {
+      await _cancelSos();
+    }
+  }
+
+  Future<void> _executeSosDispatch() async {
+    if (!mounted || !isCountingDown) return;
+
+    setState(() {
+      isCountingDown = false;
+      status = '3 seconds elapsed. Dispatching emergency alert to $contactName...';
+    });
+
+    await voiceService.speak('Dispatching emergency alert. Fetching GPS coordinates.');
+
     try {
       final location = await emergencyService.fetchLocation();
       final message = emergencyService.composeMessage(location);
 
       // 1. Send SMS alert
       await emergencyService.sendSos(contactPhone, message);
-      setState(() {
-        status = 'SOS SMS sent to $contactName ($contactPhone) with coordinates ${location.latitude}, ${location.longitude}. Calling contact now...';
-      });
+      if (mounted) {
+        setState(() {
+          status = 'SOS SMS sent to $contactName ($contactPhone) with coordinates ${location.latitude.toStringAsFixed(4)}, ${location.longitude.toStringAsFixed(4)}. Calling contact now...';
+        });
+      }
       await voiceService.speak('Emergency SMS sent. Placing call to $contactName.');
 
       // 2. Call trusted contact
       await emergencyService.makePhoneCall(contactPhone);
     } catch (error) {
       final errorMsg = 'SOS alert error: $error';
-      setState(() {
-        status = errorMsg;
-      });
-      await voiceService.speak('Emergency alert encountered an issue. Please dial manually.');
+      if (mounted) {
+        setState(() {
+          status = errorMsg;
+        });
+      }
+      await voiceService.speak('Emergency alert encountered an issue. Placing phone call directly.');
+      try {
+        await emergencyService.makePhoneCall(contactPhone);
+      } catch (_) {}
     }
   }
 
@@ -186,7 +275,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
           IconButton(
             icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white),
             tooltip: 'Configure Trusted Contact',
-            onPressed: _showAddContactDialog,
+            onPressed: isCountingDown ? null : _showAddContactDialog,
           ),
         ],
       ),
@@ -233,60 +322,155 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                     ),
                   ),
                   TextButton(
-                    onPressed: _showAddContactDialog,
+                    onPressed: isCountingDown ? null : _showAddContactDialog,
                     child: Text(contactPhone.isNotEmpty ? 'Edit' : 'Add', style: const TextStyle(color: Colors.redAccent)),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
 
             // Status message
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFF21262D),
+                color: isCountingDown ? const Color(0xFF3B1219) : const Color(0xFF21262D),
                 borderRadius: BorderRadius.circular(12),
+                border: isCountingDown ? Border.all(color: Colors.redAccent, width: 2) : null,
               ),
               child: Text(
                 status,
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                style: TextStyle(
+                  color: isCountingDown ? Colors.white : Colors.white70,
+                  fontSize: 15,
+                  fontWeight: isCountingDown ? FontWeight.bold : FontWeight.normal,
+                ),
                 textAlign: TextAlign.center,
               ),
             ),
             const Spacer(),
 
-            // Voice Command Button
-            VoiceButton(
-              label: 'VOICE SOS COMMAND',
-              subtitle: 'Tap to speak: "SOS", "Contact", or "Back"',
-              activeSubtitle: 'Listening... say "SOS" for immediate help',
-              isListening: isListening,
-              onPressed: _handleVoiceCommand,
-              primaryColor: const Color(0xFF1E293B),
-              activeColor: Colors.red.shade700,
-            ),
-            const SizedBox(height: 16),
-
-            // Big SOS Trigger Button
-            SizedBox(
-              height: 110,
-              child: ElevatedButton.icon(
-                onPressed: _triggerSos,
-                icon: const Icon(Icons.warning_amber_rounded, size: 42, color: Colors.white),
-                label: const Text(
-                  'TRIGGER EMERGENCY SOS\n(SMS + Call)',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, height: 1.2),
+            // If counting down: show prominent 3-second Cancellation Banner & Cancel Button
+            if (isCountingDown) ...[
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2E080E),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.redAccent, width: 2.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.redAccent.withAlpha((0.4 * 255).round()),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ],
                 ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 54,
+                          height: 54,
+                          decoration: const BoxDecoration(
+                            color: Colors.redAccent,
+                            shape: BoxShape.circle,
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '$countdownSeconds',
+                            style: const TextStyle(
+                              fontSize: 28,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'CANCELLATION WINDOW',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.redAccent,
+                                  letterSpacing: 1.0,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Say "CANCEL" or tap below',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 64,
+                      child: ElevatedButton.icon(
+                        onPressed: _cancelSos,
+                        icon: const Icon(Icons.cancel_rounded, size: 30, color: Colors.white),
+                        label: const Text(
+                          'CANCEL SOS NOW',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red.shade700,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 20),
+            ] else ...[
+              // Voice Command Button
+              VoiceButton(
+                label: 'VOICE SOS COMMAND',
+                subtitle: 'Tap to speak: "SOS", "Contact", or "Back"',
+                activeSubtitle: 'Listening... say "SOS" for immediate help',
+                isListening: isListening,
+                onPressed: _handleVoiceCommand,
+                primaryColor: const Color(0xFF1E293B),
+                activeColor: Colors.red.shade700,
+              ),
+              const SizedBox(height: 16),
+
+              // Big SOS Trigger Button
+              SizedBox(
+                height: 100,
+                child: ElevatedButton.icon(
+                  onPressed: _triggerSos,
+                  icon: const Icon(Icons.warning_amber_rounded, size: 38, color: Colors.white),
+                  label: const Text(
+                    'TRIGGER EMERGENCY SOS\n(SMS + Call with 3s Cancel)',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, height: 1.2),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
           ],
         ),
       ),

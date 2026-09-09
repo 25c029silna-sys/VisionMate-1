@@ -77,9 +77,13 @@ class StorageService {
   }
 
   Future<Map<String, String>> getTrustedContact() async {
-    final name = await getSetting('trusted_contact_name') ?? 'Emergency Contact';
-    final phone = await getSetting('trusted_contact_phone') ?? '';
-    return {'name': name, 'phone': phone};
+    try {
+      final name = await getSetting('trusted_contact_name') ?? 'Emergency Contact';
+      final phone = await getSetting('trusted_contact_phone') ?? '';
+      return {'name': name, 'phone': phone};
+    } catch (_) {
+      return {'name': 'Emergency Contact', 'phone': ''};
+    }
   }
 }
 

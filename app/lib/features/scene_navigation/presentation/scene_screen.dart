@@ -200,15 +200,15 @@ class _SceneScreenState extends State<SceneScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Live Camera Viewfinder
+            // Live Camera Viewfinder (Flex: 2)
             Expanded(
-              flex: 3,
+              flex: 2,
               child: Container(
-                margin: const EdgeInsets.all(16.0),
+                margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
                 decoration: BoxDecoration(
                   color: Colors.black,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Theme.of(context).primaryColor, width: 2),
+                  border: Border.all(color: Colors.tealAccent.withAlpha((0.6 * 255).round()), width: 2),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Stack(
@@ -221,7 +221,7 @@ class _SceneScreenState extends State<SceneScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            CircularProgressIndicator(),
+                            CircularProgressIndicator(color: Colors.tealAccent),
                             SizedBox(height: 12),
                             Text(
                               'Initializing camera view...',
@@ -239,77 +239,171 @@ class _SceneScreenState extends State<SceneScreen> {
                         ),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      margin: const EdgeInsets.all(24),
+                      margin: const EdgeInsets.all(20),
                     ),
                   ],
                 ),
               ),
             ),
-            // Result Display & Action Controls
+            // Result Display & Action Controls (Flex: 3 so description box has generous space)
             Expanded(
-              flex: 2,
+              flex: 3,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // Prominent, High-Contrast Scene Description Box
                     Expanded(
                       child: Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.all(14.0),
+                        padding: const EdgeInsets.all(12.0),
                         decoration: BoxDecoration(
-                          color: Colors.grey.shade900,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white12),
-                        ),
-                        child: SingleChildScrollView(
-                          child: SelectableText(
-                            result,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              height: 1.5,
-                              color: Colors.white,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
+                          color: const Color(0xFF161B22),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: isAnalyzing
+                                ? Colors.tealAccent
+                                : Colors.tealAccent.withAlpha((0.4 * 255).round()),
+                            width: 1.5,
                           ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.tealAccent.withAlpha((0.08 * 255).round()),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Header Row with Icon and Live Status Badge
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(5),
+                                  decoration: BoxDecoration(
+                                    color: Colors.tealAccent.withAlpha((0.15 * 255).round()),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.visibility_rounded,
+                                    color: Colors.tealAccent,
+                                    size: 16,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'SCENE DESCRIPTION',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.tealAccent,
+                                    letterSpacing: 1.1,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: isAnalyzing
+                                        ? Colors.amber.withAlpha((0.2 * 255).round())
+                                        : Colors.green.withAlpha((0.2 * 255).round()),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: isAnalyzing ? Colors.amberAccent : Colors.greenAccent,
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                          color: isAnalyzing ? Colors.amberAccent : Colors.greenAccent,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        isAnalyzing ? 'ANALYZING' : 'READY',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: isAnalyzing ? Colors.amberAccent : Colors.greenAccent,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 6.0),
+                              child: Divider(color: Colors.white12, height: 1),
+                            ),
+                            // Text Output Area with guaranteed visibility
+                            Expanded(
+                              child: SingleChildScrollView(
+                                physics: const BouncingScrollPhysics(),
+                                child: Text(
+                                  result,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    height: 1.45,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  textAlign: TextAlign.start,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
+                    // Action Buttons Row / Compact Stack
                     SizedBox(
                       width: double.infinity,
-                      height: 52,
+                      height: 46,
                       child: ElevatedButton.icon(
                         onPressed: isAnalyzing ? null : _describeScene,
                         icon: isAnalyzing
                             ? const SizedBox(
-                                width: 20,
-                                height: 20,
+                                width: 18,
+                                height: 18,
                                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                               )
-                            : const Icon(Icons.explore, size: 24),
+                            : const Icon(Icons.explore, size: 22),
                         label: Text(
                           isAnalyzing ? 'Analyzing Surroundings...' : 'Describe Surroundings',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                         ),
                         style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.teal.shade700,
+                          foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 6),
                     VoiceButton(
                       label: 'VOICE COMMAND',
                       subtitle: 'Tap to speak: "Describe", "Repeat", or "Flash"',
                       activeSubtitle: 'Listening... say "Describe" or "Flash"',
                       isListening: isListening,
                       onPressed: _handleVoiceCommand,
+                      height: 52,
                       primaryColor: const Color(0xFF1E293B),
                       activeColor: Colors.teal.shade700,
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                   ],
                 ),
               ),

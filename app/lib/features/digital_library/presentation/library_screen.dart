@@ -39,23 +39,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _seedSampleDocumentsIfEmpty() async {
-    final docs = await storageService.fetchDocuments();
-    if (docs.isEmpty) {
-      await libraryService.addAndIndexDocument(
-        'VisionMate Navigation Manual',
-        'VisionMate uses artificial intelligence to assist blind and visually impaired users with real-time obstacle detection and scene recognition.',
-        sourceType: 'user_manual',
-      );
-      await libraryService.addAndIndexDocument(
-        'Emergency SOS Guide',
-        'Pressing the SOS button triggers an emergency alert SMS with current GPS latitude and longitude coordinates, and calls your trusted contact.',
-        sourceType: 'guide',
-      );
-      await libraryService.addAndIndexDocument(
-        'Braille & OCR Scanner',
-        'Point camera at printed pages or tactile Braille characters to scan and hear translated text spoken clearly.',
-        sourceType: 'tutorial',
-      );
+    try {
+      final docs = await storageService.fetchDocuments();
+      if (docs.isEmpty) {
+        await libraryService.addAndIndexDocument(
+          'VisionMate Navigation Manual',
+          'VisionMate uses artificial intelligence to assist blind and visually impaired users with real-time obstacle detection and scene recognition.',
+          sourceType: 'user_manual',
+        );
+        await libraryService.addAndIndexDocument(
+          'Emergency SOS Guide',
+          'Pressing the SOS button triggers an emergency alert SMS with current GPS latitude and longitude coordinates, and calls your trusted contact.',
+          sourceType: 'guide',
+        );
+        await libraryService.addAndIndexDocument(
+          'Braille & OCR Scanner',
+          'Point camera at printed pages or tactile Braille characters to scan and hear translated text spoken clearly.',
+          sourceType: 'tutorial',
+        );
+      }
+    } catch (e) {
+      debugPrint('LibraryScreen: Seeding skipped: $e');
     }
   }
 
@@ -263,7 +267,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
             // Search Trigger Button
             VoiceButton(
-              label: 'VOICE SEARCH LIBRARY',
+              label: 'Voice Search Library',
               subtitle: 'Tap to speak your query (e.g., "Navigation", "SOS")',
               activeSubtitle: 'Listening... speak your search query now',
               isListening: isSearching,

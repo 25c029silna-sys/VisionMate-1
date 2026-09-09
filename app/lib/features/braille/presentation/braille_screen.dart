@@ -8,6 +8,7 @@ import '../../../widgets/voice_button.dart';
 import '../../digital_library/data/embedding_store.dart';
 import '../../digital_library/domain/library_service.dart';
 import '../domain/braille_service.dart';
+import '../domain/braille_text_refiner.dart';
 
 class BrailleScreen extends StatefulWidget {
   const BrailleScreen({super.key});
@@ -25,6 +26,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
   bool isScanning = false;
   bool isCameraReady = false;
   bool isExportingPdf = false;
+  bool isEnhancing = false;
   bool isListening = false;
 
   @override
@@ -76,6 +78,8 @@ class _BrailleScreenState extends State<BrailleScreen> {
     final lower = command.toLowerCase().trim();
     if (lower.contains('scan') || lower.contains('capture') || lower.contains('read') || lower.contains('process')) {
       await _scanBraille();
+    } else if (lower.contains('enhance') || lower.contains('polish') || lower.contains('fix') || lower.contains('correct')) {
+      await _enhanceText();
     } else if (lower.contains('pdf') || lower.contains('export') || lower.contains('save')) {
       await _exportToPdf();
     } else if (lower.contains('repeat') || lower.contains('again')) {
@@ -86,9 +90,39 @@ class _BrailleScreenState extends State<BrailleScreen> {
       await voiceService.speak('Returning to main menu.');
       if (mounted) Navigator.pop(context);
     } else if (lower.contains('help') || lower.contains('guide')) {
-      await voiceService.speak('Available commands: say Scan to read Braille, PDF to export document, Repeat to hear again, or Back to return home.');
+      await voiceService.speak('Available commands: say Scan to read Braille, Enhance to restore text, PDF to export document, Repeat to hear again, or Back to return home.');
     } else {
-      await voiceService.speak('Command not recognized. Say Scan, PDF, or Back.');
+      await voiceService.speak('Command not recognized. Say Scan, Enhance, PDF, or Back.');
+    }
+  }
+
+  Future<void> _enhanceText() async {
+    if (result.trim().isEmpty || result.contains('Position camera') || result.contains('Processing')) {
+      await voiceService.speak('No recognized Braille text available to enhance.');
+      return;
+    }
+
+    setState(() {
+      isEnhancing = true;
+    });
+    await voiceService.speak('Refining Braille text with language model...');
+
+    try {
+      final enhanced = await BrailleTextRefiner.refineWithAi(result);
+      if (!mounted) return;
+
+      setState(() {
+        result = enhanced;
+        isEnhancing = false;
+      });
+
+      await voiceService.speak('Text enhanced: $enhanced');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        isEnhancing = false;
+      });
+      await voiceService.speak('Could not complete text enhancement.');
     }
   }
 
@@ -327,7 +361,29 @@ class _BrailleScreenState extends State<BrailleScreen> {
                           ),
                         ),
                         if (hasRecognizedText) ...[
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 8),
+                          SizedBox(
+                            height: 52,
+                            child: ElevatedButton.icon(
+                              onPressed: isEnhancing ? null : _enhanceText,
+                              icon: isEnhancing
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Icon(Icons.auto_fix_high, size: 20),
+                              label: const Text('Enhance', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.teal.shade700,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
                           SizedBox(
                             height: 52,
                             child: ElevatedButton.icon(
@@ -339,7 +395,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
                                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                     )
                                   : const Icon(Icons.picture_as_pdf, size: 22),
-                              label: const Text('PDF', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                              label: const Text('PDF', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.deepOrangeAccent,
                                 foregroundColor: Colors.white,
