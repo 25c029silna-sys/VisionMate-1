@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'core/voice/voice_service.dart';
@@ -16,6 +17,7 @@ import 'widgets/voice_button.dart';
 import 'widgets/voice_command_guide.dart';
 
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
+final RouteObserver<PageRoute> appRouteObserver = RouteObserver<PageRoute>();
 
 class VisionMateApp extends StatelessWidget {
   const VisionMateApp({super.key});
@@ -33,6 +35,7 @@ class VisionMateApp extends StatelessWidget {
           return GlobalShakeWrapper(
             child: MaterialApp(
               navigatorKey: rootNavigatorKey,
+              navigatorObservers: [appRouteObserver],
               title: 'VisionMate',
               debugShowCheckedModeBanner: false,
               theme: ThemeData.dark().copyWith(
@@ -78,7 +81,7 @@ class _GlobalShakeWrapperState extends State<GlobalShakeWrapper> {
     _voiceService = Provider.of<VoiceService>(context, listen: false);
     _storageService = Provider.of<StorageService>(context, listen: false);
 
-    // Gesture-triggered SOS with 3-second voice cancellation window
+    // Gesture-triggered SOS with 8-second voice cancellation window
     _shakeDetector.startListening(() async {
       if (!mounted) return;
       final emergencyService = EmergencyService();
@@ -108,11 +111,12 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   late final VoiceService voiceService;
   late final CommandRouter router;
   String status = 'Voice ready. Tap microphone or shake for SOS.';
   bool isListening = false;
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -132,7 +136,70 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      appRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void dispose() {
+    _retryTimer?.cancel();
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPushNext() {
+    // Stop listening when navigating to a child module
+    _retryTimer?.cancel();
+    if (isListening) {
+      voiceService.stopListening();
+      if (mounted) {
+        setState(() {
+          isListening = false;
+          status = 'Voice listening paused.';
+        });
+      }
+    }
+  }
+
+  @override
+  void didPopNext() {
+    // Automatically reactivate voice input when returning to the HomeScreen
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await voiceService.speak(
+        'Returned to main menu. Listening for your command...',
+        awaitCompletion: true,
+      );
+      if (mounted) {
+        await _activateVoiceRecognition();
+      }
+    });
+  }
+
+  Future<void> _navigateToModule(String route) async {
+    if (isListening) {
+      await voiceService.stopListening();
+      if (mounted) {
+        setState(() {
+          isListening = false;
+          status = 'Opening module...';
+        });
+      }
+    }
+    if (mounted) {
+      await Navigator.pushNamed(context, route);
+    }
+  }
+
   Future<void> _activateVoiceRecognition() async {
+    _retryTimer?.cancel();
     if (isListening) {
       await voiceService.stopListening();
       if (mounted) {
@@ -151,7 +218,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    final command = await voiceService.listen(listenDurationSeconds: 5);
+    final command = await voiceService.listen();
 
     if (!mounted) return;
 
@@ -183,11 +250,16 @@ class _HomeScreenState extends State<HomeScreen> {
         } else {
           await voiceService.speak('Opening module.');
           if (mounted) {
-            Navigator.pushNamed(context, route);
+            await _navigateToModule(route);
           }
         }
       } else {
         await voiceService.speak('Command not recognized. Tap the voice button, say VisionMate, or say Guide for help.');
+        if (mounted) {
+          setState(() {
+            status = 'Command not recognized. Tap microphone button to speak.';
+          });
+        }
       }
     } else {
       setState(() {
@@ -280,7 +352,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 primaryColor: Colors.amberAccent,
                 secondaryColor: Colors.amber,
                 badgeText: 'TACTILE',
-                onTap: () => Navigator.pushNamed(context, '/braille'),
+                onTap: () => _navigateToModule('/braille'),
               ),
               const SizedBox(height: 12),
 
@@ -291,7 +363,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 primaryColor: Colors.purpleAccent,
                 secondaryColor: Colors.deepPurple,
                 badgeText: 'OFFLINE RAG',
-                onTap: () => Navigator.pushNamed(context, '/library'),
+                onTap: () => _navigateToModule('/library'),
               ),
               const SizedBox(height: 12),
 
@@ -302,7 +374,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 primaryColor: Colors.lightBlueAccent,
                 secondaryColor: Colors.blue,
                 badgeText: 'TEXT TO SPEECH',
-                onTap: () => Navigator.pushNamed(context, '/ocr'),
+                onTap: () => _navigateToModule('/ocr'),
               ),
               const SizedBox(height: 12),
 
@@ -313,7 +385,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 primaryColor: Colors.tealAccent,
                 secondaryColor: Colors.teal,
                 badgeText: 'YOLO REAL-TIME',
-                onTap: () => Navigator.pushNamed(context, '/scene'),
+                onTap: () => _navigateToModule('/scene'),
               ),
               const SizedBox(height: 12),
 
@@ -324,7 +396,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 primaryColor: Colors.redAccent,
                 secondaryColor: Colors.red,
                 badgeText: 'SAFETY',
-                onTap: () => Navigator.pushNamed(context, '/emergency'),
+                onTap: () => _navigateToModule('/emergency'),
               ),
               const SizedBox(height: 80),
             ],

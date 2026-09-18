@@ -4,14 +4,16 @@ import '../core/voice/voice_service.dart';
 import '../core/voice/voice_guide_service.dart';
 
 class VoiceCommandGuideModal extends StatelessWidget {
-  const VoiceCommandGuideModal({super.key});
+  final VoidCallback? onGuideCompleted;
 
-  static void show(BuildContext context) {
+  const VoiceCommandGuideModal({super.key, this.onGuideCompleted});
+
+  static void show(BuildContext context, {VoidCallback? onGuideCompleted}) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => const VoiceCommandGuideModal(),
+      builder: (context) => VoiceCommandGuideModal(onGuideCompleted: onGuideCompleted),
     );
   }
 
@@ -116,8 +118,9 @@ class VoiceCommandGuideModal extends StatelessWidget {
                   ),
                 ),
                 ElevatedButton.icon(
-                  onPressed: () {
-                    VoiceGuideService(voiceService).readGuideAloud();
+                  onPressed: () async {
+                    await VoiceGuideService(voiceService).readGuideAloud();
+                    onGuideCompleted?.call();
                   },
                   icon: const Icon(Icons.volume_up_rounded, size: 18),
                   label: const Text('Read Aloud', style: TextStyle(fontSize: 13)),

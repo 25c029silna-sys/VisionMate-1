@@ -9,6 +9,20 @@ import '../data/braille_preprocessor.dart';
 import 'braille_text_refiner.dart';
 import 'yolo_braille_decoder.dart';
 
+class LetterboxResult {
+  final img.Image image;
+  final double scale;
+  final int padX;
+  final int padY;
+
+  LetterboxResult({
+    required this.image,
+    required this.scale,
+    required this.padX,
+    required this.padY,
+  });
+}
+
 class BrailleService {
   final TfliteHelper _tfliteHelper = TfliteHelper();
   final BraillePreprocessor _preprocessor = BraillePreprocessor();
@@ -196,10 +210,8 @@ class BrailleService {
     return await pdfService.generatePdfFromText(title: title, textContent: textContent);
   }
 
-  /// Letterboxes [src] to [targetWidth] x [targetHeight] by maintaining its aspect ratio
-  /// and padding the remaining canvas with neutral gray (114, 114, 114).
-  /// Preserves Braille cell topology and prevents aspect-ratio distortion across orientations.
-  static img.Image letterbox(img.Image src, int targetWidth, int targetHeight) {
+  /// Result of letterboxing with scaling factor and padding offsets
+  static LetterboxResult letterboxDetails(img.Image src, int targetWidth, int targetHeight) {
     final double scale = min(targetWidth / src.width, targetHeight / src.height);
     final int newW = (src.width * scale).round();
     final int newH = (src.height * scale).round();
@@ -212,16 +224,58 @@ class BrailleService {
     final int padY = ((targetHeight - newH) / 2).round();
 
     img.compositeImage(canvas, resized, dstX: padX, dstY: padY);
-    return canvas;
+    return LetterboxResult(
+      image: canvas,
+      scale: scale,
+      padX: padX,
+      padY: padY,
+    );
   }
 
-  /// Evaluates 4 camera orientations (0°, 270°, 90°, 180°), normalizes topology with letterbox,
-  /// and runs YOLOv8 Braille object detection.
-  Future<String> _processImageAndRunYoloInference(img.Image originalImage) async {
-    final interpreter = _tfliteHelper.interpreter!;
+  /// Letterboxes [src] to [targetWidth] x [targetHeight] by maintaining its aspect ratio
+  /// and padding the remaining canvas with neutral gray (114, 114, 114).
+  /// Preserves Braille cell topology and prevents aspect-ratio distortion across orientations.
+  static img.Image letterbox(img.Image src, int targetWidth, int targetHeight) {
+    return letterboxDetails(src, targetWidth, targetHeight).image;
+  }
 
+  /// Runs YOLOv8 TFLite inference on a 640x640 preprocessed image and returns the raw output tensor.
+  List<dynamic> _runInferenceOn640(img.Image image640) {
+    final inputTensor = List.generate(
+      1,
+      (_) => List.generate(
+        640,
+        (y) => List.generate(
+          640,
+          (x) {
+            final pixel = image640.getPixel(x, y);
+            return [
+              pixel.r / 255.0,
+              pixel.g / 255.0,
+              pixel.b / 255.0,
+            ];
+          },
+        ),
+      ),
+    );
+
+    final outputTensor = List.generate(
+      1,
+      (_) => List.generate(68, (_) => List.filled(8400, 0.0)),
+    );
+
+    _tfliteHelper.interpreter!.run(inputTensor, outputTensor);
+    return outputTensor;
+  }
+
+  /// Evaluates 4 camera orientations (0°, 270°, 90°, 180°), selects optimal angle,
+  /// executes multi-tile high-resolution sliced inference on tall document pages,
+  /// and reconstructs text in natural reading order.
+  Future<String> _processImageAndRunYoloInference(img.Image originalImage) async {
     List<dynamic> bestOutput = [];
     double bestScore = -1.0;
+    int bestAngle = 0;
+    LetterboxResult? bestLb;
 
     // Evaluate 4 possible camera orientations (0°, 270°, 90°, 180°)
     // Selects the orientation with the highest total Braille character detection confidence.
@@ -234,32 +288,8 @@ class BrailleService {
       }
 
       // Preserve Braille cell aspect ratio and topology using letterbox padding
-      final resized = letterbox(currentImage, 640, 640);
-
-      final inputTensor = List.generate(
-        1,
-        (_) => List.generate(
-          640,
-          (y) => List.generate(
-            640,
-            (x) {
-              final pixel = resized.getPixel(x, y);
-              return [
-                pixel.r / 255.0,
-                pixel.g / 255.0,
-                pixel.b / 255.0,
-              ];
-            },
-          ),
-        ),
-      );
-
-      final outputTensor = List.generate(
-        1,
-        (_) => List.generate(68, (_) => List.filled(8400, 0.0)),
-      );
-
-      interpreter.run(inputTensor, outputTensor);
+      final lb = letterboxDetails(currentImage, 640, 640);
+      final outputTensor = _runInferenceOn640(lb.image);
 
       // Score this orientation: sum confidence of all candidate detections >= 0.30
       double currentScore = 0.0;
@@ -281,25 +311,108 @@ class BrailleService {
         }
       }
 
-      if (currentScore > bestScore) {
+      // Upright orientation (0°) is strongly prioritized because camera photos are already
+      // auto-oriented upright by EXIF metadata via img.bakeOrientation().
+      if (angle == 0) {
         bestScore = currentScore;
+        bestAngle = 0;
         bestOutput = outputTensor;
-      }
+        bestLb = lb;
 
-      // If upright orientation (0°) has strong detections (> 70 high-confidence characters), stop early
-      if (angle == 0 && detectionCount > 70) {
-        break;
+        // If upright orientation has confident detections (>= 25 characters), lock 0° immediately
+        if (detectionCount >= 25) {
+          break;
+        }
+      } else {
+        // Only switch away from 0° if the alternate angle has significantly higher confidence (>= 1.6x)
+        // or if 0° had almost zero detections (bestScore < 3.0)
+        final thresholdScore = bestScore <= 3.0 ? bestScore : bestScore * 1.6;
+        if (currentScore > thresholdScore) {
+          bestScore = currentScore;
+          bestAngle = angle;
+          bestOutput = outputTensor;
+          bestLb = lb;
+        }
       }
     }
 
-    if (bestOutput.isEmpty) {
+    img.Image orientedImage = originalImage;
+    if (bestAngle != 0) {
+      orientedImage = img.copyRotate(originalImage, angle: bestAngle);
+    }
+
+    final int w = orientedImage.width;
+    final int h = orientedImage.height;
+    final List<BrailleDetection> allCandidates = [];
+
+    // If tall portrait page (H > 1.15 * W), perform high-resolution multi-tile sliced inference
+    // This doubles/triples pixel resolution per embossed Braille dot, preventing 640x640 blur.
+    if (h > (w * 1.15) && h >= 400) {
+      // Slice 1: Top 58% of document height
+      final int topH = (h * 0.58).round();
+      final cropTop = img.copyCrop(orientedImage, x: 0, y: 0, width: w, height: topH);
+      final lbTop = letterboxDetails(cropTop, 640, 640);
+      final outTop = _runInferenceOn640(lbTop.image);
+      allCandidates.addAll(YoloBrailleDecoder.extractDetections(
+        outTop,
+        scale: lbTop.scale,
+        padX: lbTop.padX.toDouble(),
+        padY: lbTop.padY.toDouble(),
+        offsetX: 0.0,
+        offsetY: 0.0,
+        confidenceThreshold: 0.28,
+      ));
+
+      // Slice 2: Bottom 58% of document height (16% central seam overlap: 0.42 to 1.0)
+      final int bottomY = (h * 0.42).round();
+      final int bottomH = h - bottomY;
+      final cropBottom = img.copyCrop(orientedImage, x: 0, y: bottomY, width: w, height: bottomH);
+      final lbBottom = letterboxDetails(cropBottom, 640, 640);
+      final outBottom = _runInferenceOn640(lbBottom.image);
+      allCandidates.addAll(YoloBrailleDecoder.extractDetections(
+        outBottom,
+        scale: lbBottom.scale,
+        padX: lbBottom.padX.toDouble(),
+        padY: lbBottom.padY.toDouble(),
+        offsetX: 0.0,
+        offsetY: bottomY.toDouble(),
+        confidenceThreshold: 0.28,
+      ));
+
+      // Also merge the full-page pass detections for macro-cohesion
+      if (bestLb != null && bestOutput.isNotEmpty) {
+        allCandidates.addAll(YoloBrailleDecoder.extractDetections(
+          bestOutput,
+          scale: bestLb.scale,
+          padX: bestLb.padX.toDouble(),
+          padY: bestLb.padY.toDouble(),
+          offsetX: 0.0,
+          offsetY: 0.0,
+          confidenceThreshold: 0.32,
+        ));
+      }
+    } else {
+      // Landscape or square crop: single letterbox pass
+      if (bestLb != null && bestOutput.isNotEmpty) {
+        allCandidates.addAll(YoloBrailleDecoder.extractDetections(
+          bestOutput,
+          scale: bestLb.scale,
+          padX: bestLb.padX.toDouble(),
+          padY: bestLb.padY.toDouble(),
+          offsetX: 0.0,
+          offsetY: 0.0,
+          confidenceThreshold: 0.28,
+        ));
+      }
+    }
+
+    if (allCandidates.isEmpty) {
       return '';
     }
 
-    // Decode detections with NMS, line clustering, and reading-order reconstruction
-    return YoloBrailleDecoder.decodeYoloOutput(
-      bestOutput,
-      confidenceThreshold: 0.30,
+    // Decode unified detections across slices with global NMS and reading-order reconstruction
+    return YoloBrailleDecoder.reconstructFromDetections(
+      allCandidates,
       iouThreshold: 0.40,
     );
   }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -35,6 +36,7 @@ class _OcrScreenState extends State<OcrScreen> {
   bool isScanning = false;
   bool isFlashOn = false;
   bool isListening = false;
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -91,6 +93,7 @@ class _OcrScreenState extends State<OcrScreen> {
   }
 
   Future<void> _handleVoiceCommand() async {
+    _retryTimer?.cancel();
     if (isListening) {
       await voiceService.stopListening();
       if (mounted) {
@@ -136,6 +139,11 @@ class _OcrScreenState extends State<OcrScreen> {
       await voiceService.speak('Available commands: say Capture to scan text, Repeat to hear text again, Flash to toggle flashlight, or Back to exit.');
     } else {
       await voiceService.speak('Command not recognized. Say Capture, Repeat, Flash, or Back.');
+      if (mounted) {
+        setState(() {
+          status = 'Tap microphone button to speak a command.';
+        });
+      }
     }
   }
 
@@ -203,6 +211,10 @@ class _OcrScreenState extends State<OcrScreen> {
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
+    if (isFlashOn) {
+      cameraService.toggleFlash(false);
+    }
     cameraService.dispose();
     super.dispose();
   }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/storage/storage_service.dart';
@@ -21,6 +22,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   String status = 'Smart digital library ready. Search by voice or add notes.';
   List<Map<String, dynamic>> searchResults = [];
   bool isSearching = false;
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -69,37 +71,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF161B22),
         title: const Text('Add Document to Library', style: TextStyle(color: Colors.white)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Document Title',
-                  labelStyle: TextStyle(color: Colors.white70),
-                ),
-                style: const TextStyle(color: Colors.white),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: titleController,
+              decoration: const InputDecoration(
+                labelText: 'Document Title',
+                labelStyle: TextStyle(color: Colors.white70),
+                hintText: 'e.g., Biology Notes Chapter 1',
+                hintStyle: TextStyle(color: Colors.white30),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: textController,
-                maxLines: 4,
-                decoration: const InputDecoration(
-                  labelText: 'Document Text / Content',
-                  labelStyle: TextStyle(color: Colors.white70),
-                ),
-                style: const TextStyle(color: Colors.white),
+              style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: textController,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Document Content',
+                labelStyle: TextStyle(color: Colors.white70),
+                hintText: 'Paste or type notes or Braille translation text...',
+                hintStyle: TextStyle(color: Colors.white30),
               ),
-            ],
-          ),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
           ),
           ElevatedButton(
@@ -108,11 +112,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
               final text = textController.text.trim();
               if (title.isNotEmpty && text.isNotEmpty) {
                 await libraryService.addAndIndexDocument(title, text);
-                if (mounted) Navigator.pop(context);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
                 await voiceService.speak('Document indexed into digital library.');
-                setState(() {
-                  status = 'Document "$title" added and indexed into vector store.';
-                });
+                if (mounted) {
+                  setState(() {
+                    status = 'Document "$title" added and indexed into vector store.';
+                  });
+                }
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.purpleAccent),
@@ -124,6 +130,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _searchLibrary() async {
+    _retryTimer?.cancel();
     if (isSearching) {
       await voiceService.stopListening();
       if (mounted) {
@@ -144,10 +151,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!mounted) return;
 
     if (rawQuery == null || rawQuery.trim().isEmpty) {
-      setState(() {
-        isSearching = false;
-        status = 'No query detected. Tap Voice Search button to try again.';
-      });
+      if (mounted) {
+        setState(() {
+          isSearching = false;
+          status = 'Tap Voice Search button to speak a query.';
+        });
+      }
       return;
     }
 
@@ -204,6 +213,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  @override
+  void dispose() {
+    _retryTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -103,16 +103,28 @@ class YoloBrailleDecoder {
     'f': '6', 'g': '7', 'h': '8', 'i': '9', 'j': '0',
   };
 
-  /// Decodes raw YOLOv8 output tensor [1, 68, 8400] into formatted text.
-  static String decodeYoloOutput(
+  /// Extracts candidate boxes from tensor shape [1, 68, 8400] and projects them into
+  /// original image coordinates using [scale], [padX], [padY], [offsetX], [offsetY].
+  static List<BrailleDetection> extractDetections(
     List<dynamic> rawOutput, {
-    double confidenceThreshold = 0.25,
-    double iouThreshold = 0.45,
+    double scale = 1.0,
+    double padX = 0.0,
+    double padY = 0.0,
+    double offsetX = 0.0,
+    double offsetY = 0.0,
+    double confidenceThreshold = 0.28,
   }) {
-    // 1. Extract candidate boxes from tensor shape [1, 68, 8400]
     final List<BrailleDetection> candidates = [];
     final outputTensor = rawOutput[0] as List; // 68 channels x 8400 boxes
     final int numBoxes = (outputTensor[0] as List).length;
+
+    // Selective confidence threshold: single-dot symbols and sparse punctuation marks
+    // easily false-trigger on faint paper shadows, wrinkles, or embossing texture.
+    // We enforce a higher confidence floor (0.48) for these, while keeping default (0.28-0.30) for standard letters.
+    // Note: Class 32 is letter 'a' (binary 100000) and must use standard confidence (0.28).
+    const punctuationAndSparseClasses = {
+      1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 24, 25, 26
+    };
 
     for (int i = 0; i < numBoxes; i++) {
       final double cx = (outputTensor[0][i] as num).toDouble();
@@ -132,34 +144,35 @@ class YoloBrailleDecoder {
         }
       }
 
-      // Selective confidence threshold: single-dot symbols and sparse punctuation marks
-      // easily false-trigger on faint paper shadows, wrinkles, or embossing texture.
-      // We enforce a higher confidence floor (0.48) for these, while keeping 0.30 for standard letters.
-      const punctuationAndSparseClasses = {
-        1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 24, 25, 26, 32
-      };
       final minRequiredConf = punctuationAndSparseClasses.contains(bestClass)
           ? max(confidenceThreshold, 0.48)
           : confidenceThreshold;
 
       // Class 0 is '000000' (empty background)
       if (maxProb >= minRequiredConf && bestClass > 0) {
-        final double x1 = cx - w / 2.0;
-        final double y1 = cy - h / 2.0;
-        final double x2 = cx + w / 2.0;
-        final double y2 = cy + h / 2.0;
+        // Project from 640x640 canvas back to unpadded/tile coordinate space,
+        // then apply slice offset (offsetX, offsetY) to reach full image space.
+        final double boxX1 = (cx - w / 2.0 - padX) / scale + offsetX;
+        final double boxY1 = (cy - h / 2.0 - padY) / scale + offsetY;
+        final double boxX2 = (cx + w / 2.0 - padX) / scale + offsetX;
+        final double boxY2 = (cy + h / 2.0 - padY) / scale + offsetY;
+
+        final double origW = boxX2 - boxX1;
+        final double origH = boxY2 - boxY1;
+        final double origCx = (boxX1 + boxX2) / 2.0;
+        final double origCy = (boxY1 + boxY2) / 2.0;
 
         final String binary = bestClass.toRadixString(2).padLeft(6, '0');
 
         candidates.add(BrailleDetection(
-          x1: x1,
-          y1: y1,
-          x2: x2,
-          y2: y2,
-          cx: cx,
-          cy: cy,
-          width: w,
-          height: h,
+          x1: boxX1,
+          y1: boxY1,
+          x2: boxX2,
+          y2: boxY2,
+          cx: origCx,
+          cy: origCy,
+          width: origW,
+          height: origH,
           classIndex: bestClass,
           confidence: maxProb,
           binaryCode: binary,
@@ -167,18 +180,44 @@ class YoloBrailleDecoder {
       }
     }
 
+    return candidates;
+  }
+
+  /// Runs NMS and line reconstruction on an aggregated list of candidate detections.
+  static String reconstructFromDetections(
+    List<BrailleDetection> candidates, {
+    double iouThreshold = 0.40,
+  }) {
     if (candidates.isEmpty) {
       return '';
     }
 
-    // 2. Non-Maximum Suppression (NMS)
+    // Non-Maximum Suppression (NMS) across all candidates
     final List<BrailleDetection> filtered = runNms(candidates, iouThreshold);
     if (filtered.isEmpty) {
       return '';
     }
 
-    // 3. Line Clustering and Reading Order Sorting
+    // Line Clustering and Reading Order Sorting
     return reconstructText(filtered);
+  }
+
+  /// Decodes raw YOLOv8 output tensor [1, 68, 8400] into formatted text.
+  static String decodeYoloOutput(
+    List<dynamic> rawOutput, {
+    double confidenceThreshold = 0.25,
+    double iouThreshold = 0.45,
+  }) {
+    final candidates = extractDetections(
+      rawOutput,
+      scale: 1.0,
+      padX: 0.0,
+      padY: 0.0,
+      offsetX: 0.0,
+      offsetY: 0.0,
+      confidenceThreshold: confidenceThreshold,
+    );
+    return reconstructFromDetections(candidates, iouThreshold: iouThreshold);
   }
 
   /// Non-Maximum Suppression to remove duplicate bounding boxes for the same character.
@@ -247,7 +286,7 @@ class YoloBrailleDecoder {
       if (currentLineAvgY < 0) {
         currentLine.add(d);
         currentLineAvgY = d.cy;
-      } else if ((d.cy - currentLineAvgY).abs() < (medianH * 0.70)) {
+      } else if ((d.cy - currentLineAvgY).abs() < (medianH * 0.85)) {
         currentLine.add(d);
         final sumY = currentLine.fold<double>(0.0, (acc, item) => acc + item.cy);
         currentLineAvgY = sumY / currentLine.length;
@@ -272,16 +311,21 @@ class YoloBrailleDecoder {
     for (int l = 0; l < lines.length; l++) {
       final line = lines[l];
       double lastX2 = -1.0;
+      double lastCx = -1.0;
 
       for (final d in line) {
-        // Edge-to-edge word spacing:
-        // In standard Braille, adjacent cells in the same word have an edge gap of ~ 1.2 to 1.8 * medianW.
-        // An empty cell (a true blank space between words) has an edge gap >= 2.3 * medianW.
-        if (lastX2 > 0 && (d.x1 - lastX2) > (medianW * 2.3)) {
+        // Dual center-to-center and edge-to-edge word spacing detector:
+        // Center-to-center distance between adjacent cells in the same word is ~ 1.0 to 1.2 * medianW.
+        // When there is an empty space (one missing cell), center-to-center distance is >= 1.55 * medianW.
+        // Edge-to-edge gap (d.x1 - lastX2) exceeds 0.65 * medianW for a blank cell.
+        final bool isSpace = (lastCx > 0 && (d.cx - lastCx) > (medianW * 1.55)) ||
+                             (lastX2 > 0 && (d.x1 - lastX2) > (medianW * 0.65));
+        if (isSpace) {
           buffer.write(' ');
           isNumberMode = false;
         }
         lastX2 = d.x2;
+        lastCx = d.cx;
 
         final rawChar = brailleCharMap[d.binaryCode] ?? '?';
 
@@ -327,14 +371,14 @@ class YoloBrailleDecoder {
     // 3. Collapse multiple consecutive punctuation marks
     cleaned = cleaned.replaceAll(RegExp(r'[;]{2,}'), ';');
 
-    // 4. Merge sequences of single letters separated by a single space (e.g. "p a a" -> "paa", "c k a m a" -> "ckama")
-    // Standalone single-letter words like "a" surrounded by multi-letter words remain intact.
+    // 4. Merge sequences of 3+ single letters separated by a single space (e.g. "p a a" -> "paa", "c k a m a" -> "ckama")
+    // Standalone 2-letter Grade-2 sequences (e.g. "c y" for "can you", "b y" for "but you", "d y" for "do you")
+    // must NOT be merged so that Grade-2 contraction expansions work properly.
     cleaned = cleaned.replaceAllMapped(
-      RegExp(r'\b[a-zA-Z](?: [a-zA-Z])+\b'),
+      RegExp(r'\b[a-zA-Z](?: [a-zA-Z]){2,}\b'),
       (match) {
         final segment = match.group(0)!;
         final letters = segment.split(' ');
-        if (letters.length <= 1) return segment;
         return letters.join('');
       },
     );

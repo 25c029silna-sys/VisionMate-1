@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -29,7 +30,7 @@ class _MockVoiceService extends VoiceService {
   }
 
   @override
-  Future<bool> listenForCancellation({Duration duration = const Duration(seconds: 3)}) async {
+  Future<bool> listenForCancellation({Duration duration = const Duration(seconds: 8)}) async {
     return shouldCancel;
   }
 }
@@ -177,7 +178,7 @@ void main() {
           providers: [
             ChangeNotifierProvider<VoiceService>(create: (_) => VoiceService()),
             Provider<CommandRouter>(create: (_) => CommandRouter()),
-            Provider<StorageService>(create: (_) => StorageService()),
+            Provider<StorageService>(create: (_) => _FakeStorageService()),
           ],
           child: MaterialApp(home: child),
         );
@@ -205,6 +206,33 @@ void main() {
         await tester.pump(const Duration(milliseconds: 200));
 
         expect(find.textContaining('TRIGGER EMERGENCY SOS'), findsOneWidget);
+        expect(find.textContaining('8s Cancel'), findsOneWidget);
+      });
+
+      testWidgets('EmergencyScreen renders cleanly without RenderFlex overflow on constrained screen sizes', (tester) async {
+        tester.view.physicalSize = const Size(360, 560);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        await tester.pumpWidget(wrap(const EmergencyScreen()));
+        await tester.pump(const Duration(milliseconds: 200));
+
+        // Expect no Flutter error / RenderFlex overflow in idle state
+        expect(tester.takeException(), isNull);
+        final triggerFinder = find.textContaining('TRIGGER EMERGENCY SOS');
+        expect(triggerFinder, findsOneWidget);
+
+        // Scroll to and tap trigger to enter countdown state
+        await tester.ensureVisible(triggerFinder);
+        await tester.tap(triggerFinder);
+        await tester.pump(const Duration(milliseconds: 200));
+
+        // Expect countdown banner without any RenderFlex overflow
+        expect(tester.takeException(), isNull);
+        expect(find.textContaining('CANCELLATION WINDOW'), findsOneWidget);
       });
     });
   });

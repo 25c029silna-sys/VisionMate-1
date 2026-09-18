@@ -1,0 +1,253 @@
+import 'dart:convert';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:visionmate/features/braille/domain/yolo_braille_decoder.dart';
+import 'package:visionmate/features/braille/domain/braille_text_refiner.dart';
+
+void main() {
+  group('Braille Pipeline Enhancements - YoloBrailleDecoder', () {
+    test('extractDetections projects canvas coordinates back to original image space with offset', () {
+      // Create mock raw YOLO output tensor [1, 68, 1]
+      // Box at center (320, 320, 40, 60) in 640x640 canvas
+      final rawOut = List.generate(
+        1,
+        (_) => List.generate(
+          68,
+          (channel) {
+            if (channel == 0) return [320.0]; // cx
+            if (channel == 1) return [320.0]; // cy
+            if (channel == 2) return [40.0];  // w
+            if (channel == 3) return [60.0];  // h
+            if (channel == 4 + 32) return [0.95]; // class 32 (binary 100000 -> 'a')
+            return [0.0];
+          },
+        ),
+      );
+
+      // Letterbox with scale = 0.5, padX = 20, padY = 50, and slice offsetY = 400
+      final detections = YoloBrailleDecoder.extractDetections(
+        rawOut,
+        scale: 0.5,
+        padX: 20.0,
+        padY: 50.0,
+        offsetX: 0.0,
+        offsetY: 400.0,
+        confidenceThreshold: 0.25,
+      );
+
+      expect(detections.length, 1);
+      final d = detections.first;
+      expect(d.classIndex, 32);
+      expect(d.binaryCode, '100000');
+      // x1 = (300 - 20) / 0.5 = 560
+      expect(d.x1, closeTo(560.0, 0.1));
+      // y1 = (290 - 50) / 0.5 + 400 = 480 + 400 = 880
+      expect(d.y1, closeTo(880.0, 0.1));
+    });
+
+    test('reconstructFromDetections groups detections into reading order and eliminates duplicate NMS boxes', () {
+      // 2 overlapping detections for the same character in the seam
+      final d1 = BrailleDetection(
+        x1: 100, y1: 100, x2: 140, y2: 160,
+        cx: 120, cy: 130, width: 40, height: 60,
+        classIndex: 32, confidence: 0.90, binaryCode: '100000', // 'a'
+      );
+      final d2 = BrailleDetection(
+        x1: 102, y1: 101, x2: 141, y2: 161,
+        cx: 121, cy: 131, width: 39, height: 60,
+        classIndex: 32, confidence: 0.95, binaryCode: '100000', // 'a' (duplicate)
+      );
+      final d3 = BrailleDetection(
+        x1: 160, y1: 100, x2: 200, y2: 160,
+        cx: 180, cy: 130, width: 40, height: 60,
+        classIndex: 48, confidence: 0.92, binaryCode: '110000', // 'b'
+      );
+
+      final text = YoloBrailleDecoder.reconstructFromDetections([d1, d2, d3], iouThreshold: 0.40);
+      expect(text, 'ab');
+    });
+
+    test('reconstructFromDetections inserts word space when gap >= 1.55 * medianW', () {
+      // Word 1: "a" at cx = 100, width = 40
+      final d1 = BrailleDetection(
+        x1: 80, y1: 100, x2: 120, y2: 160,
+        cx: 100, cy: 130, width: 40, height: 60,
+        classIndex: 32, confidence: 0.90, binaryCode: '100000', // 'a'
+      );
+      // Word 2: "b" at cx = 180 (gap cx - lastCx = 80 >= 1.55 * 40 = 62)
+      final d2 = BrailleDetection(
+        x1: 160, y1: 100, x2: 200, y2: 160,
+        cx: 180, cy: 130, width: 40, height: 60,
+        classIndex: 48, confidence: 0.90, binaryCode: '110000', // 'b'
+      );
+
+      final text = YoloBrailleDecoder.reconstructFromDetections([d1, d2], iouThreshold: 0.40);
+      expect(text, 'a b');
+    });
+
+    test('extractDetections retains class 32 (letter a) with normal confidence >= 0.28', () {
+      final rawOut = List.generate(
+        1,
+        (_) => List.generate(
+          68,
+          (channel) {
+            if (channel == 0) return [320.0];
+            if (channel == 1) return [320.0];
+            if (channel == 2) return [40.0];
+            if (channel == 3) return [60.0];
+            if (channel == 4 + 32) return [0.35]; // Confidence 0.35 (< 0.48, but >= 0.28)
+            return [0.0];
+          },
+        ),
+      );
+
+      final detections = YoloBrailleDecoder.extractDetections(
+        rawOut,
+        confidenceThreshold: 0.28,
+      );
+
+      expect(detections.length, 1);
+      expect(detections.first.classIndex, 32);
+      expect(detections.first.binaryCode, '100000');
+    });
+  });
+
+  group('Braille Pipeline Enhancements - BrailleTextRefiner', () {
+    test('expands Grade 2 short-forms correctly', () {
+      final input = 'fr and chn cd go to rm';
+      final refined = BrailleTextRefiner.refineOffline(input);
+      expect(refined, contains('friends'));
+      expect(refined, contains('children'));
+      expect(refined, contains('could'));
+      expect(refined, contains('room'));
+    });
+
+    test('expands Grade 2 single-letter words cleanly', () {
+      final input = 'c y go to rm';
+      final refined = BrailleTextRefiner.refineOffline(input);
+      expect(refined, contains('can'));
+      expect(refined, contains('you'));
+      expect(refined, contains('go'));
+      expect(refined, contains('room'));
+    });
+
+    test('context guards single-letter words on noise-heavy lines', () {
+      // Line with noise should not turn 'e' into 'every', 'm' into 'more', 'd' into 'do'
+      final noisyLine = 'e 15 uncqou m ade d';
+      final refined = BrailleTextRefiner.refineOffline(noisyLine);
+      expect(refined.contains('every'), isFalse);
+      expect(refined.contains('more'), isFalse);
+    });
+
+    test('filters out pure noise lines', () {
+      final input = '''
+swami and friends
+u::
+x'' sha
+o
+it was monday morning
+::
+''';
+      final refined = BrailleTextRefiner.refineOffline(input);
+      final lines = refined.split('\n');
+      expect(lines.any((l) => l == 'u::'), isFalse);
+      expect(lines.any((l) => l == 'o'), isFalse);
+      expect(refined, contains('swami and friends'));
+      expect(refined, contains('it was monday morning'));
+    });
+
+    test('refineWithAi successfully reconstructs text when Gemini API returns 200 OK', () async {
+      final mockClient = MockClient((request) async {
+        expect(request.url.host, 'generativelanguage.googleapis.com');
+        expect(request.url.path, '/v1beta/models/gemini-1.5-flash:generateContent');
+        expect(request.url.queryParameters['key'], 'AIzaSyValidTestKey');
+
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body.containsKey('contents'), isTrue);
+
+        final responseJson = {
+          'candidates': [
+            {
+              'content': {
+                'parts': [
+                  {
+                    'text': 'Swami and friends could go to the room. It was Monday morning.'
+                  }
+                ]
+              }
+            }
+          ]
+        };
+        return http.Response(jsonEncode(responseJson), 200, headers: {'content-type': 'application/json'});
+      });
+
+      final rawInput = 'swami and fr cd go to rm. it was monday morning.';
+      final result = await BrailleTextRefiner.refineWithAi(
+        rawInput,
+        apiKey: ' AIzaSyValidTestKey ',
+        client: mockClient,
+      );
+
+      expect(result, 'Swami and friends could go to the room. It was Monday morning.');
+    });
+
+    test('refineWithAi throws InvalidApiKeyException when API key is a dummy placeholder', () async {
+      expect(
+        () async => await BrailleTextRefiner.refineWithAi(
+          'fr and chn',
+          apiKey: 'YOUR_GEMINI_API_KEY',
+        ),
+        throwsA(isA<InvalidApiKeyException>()),
+      );
+    });
+
+    test('refineWithAi throws InvalidApiKeyException when Gemini returns 400 or 403', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response('{"error": {"code": 400, "message": "API key not valid"}}', 400);
+      });
+
+      expect(
+        () async => await BrailleTextRefiner.refineWithAi(
+          'fr and chn cd go',
+          apiKey: 'AIzaSyBadKey',
+          client: mockClient,
+        ),
+        throwsA(isA<InvalidApiKeyException>()),
+      );
+    });
+
+    test('refineWithAi returns offline text immediately without network call when apiKey is empty', () async {
+      bool clientCalled = false;
+      final mockClient = MockClient((request) async {
+        clientCalled = true;
+        return http.Response('', 500);
+      });
+
+      final result = await BrailleTextRefiner.refineWithAi(
+        'fr and chn',
+        apiKey: '   ',
+        client: mockClient,
+      );
+
+      expect(clientCalled, isFalse);
+      expect(result, contains('friends'));
+      expect(result, contains('children'));
+    });
+
+    test('refineWithAi gracefully falls back to offline text on network exceptions / timeouts', () async {
+      final mockClient = MockClient((request) async {
+        throw http.ClientException('Network connection failed');
+      });
+
+      final result = await BrailleTextRefiner.refineWithAi(
+        'fr and chn',
+        apiKey: 'AIzaSyTestKey',
+        client: mockClient,
+      );
+
+      expect(result, contains('friends'));
+      expect(result, contains('children'));
+    });
+  });
+}

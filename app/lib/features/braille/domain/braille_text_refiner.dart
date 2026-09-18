@@ -2,6 +2,15 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+/// Exception thrown when the Gemini API key is missing, a placeholder, or invalid.
+class InvalidApiKeyException implements Exception {
+  final String message;
+  InvalidApiKeyException(this.message);
+
+  @override
+  String toString() => 'InvalidApiKeyException: $message';
+}
+
 /// Transforms raw / degraded Braille OCR text into fluent, legible natural language.
 /// Supports both fast on-device offline translation (Grade 2 Braille contractions & number signs)
 /// and optional AI generative reconstruction via Google Gemini API.
@@ -37,11 +46,51 @@ class BrailleTextRefiner {
     'z': 'as',
   };
 
+  static const Map<String, String> _grade2ShortForms = {
+    'fr': 'friends',
+    'cd': 'could',
+    'wd': 'would',
+    'sd': 'should',
+    'af': 'after',
+    'ab': 'about',
+    'al': 'also',
+    'alt': 'although',
+    'alw': 'always',
+    'bef': 'before',
+    'beh': 'behind',
+    'bel': 'below',
+    'bes': 'beside',
+    'bt': 'between',
+    'chn': 'children',
+    'fa': 'father',
+    'rm': 'room',
+    'hm': 'him',
+    'hmf': 'himself',
+    'myf': 'myself',
+    'td': 'today',
+    'tm': 'tomorrow',
+    'tn': 'tonight',
+    'yr': 'your',
+    'yrf': 'yourself',
+  };
+
+  static const Set<String> _commonEnglishAnchors = {
+    'the', 'and', 'with', 'for', 'of', 'in', 'on', 'at', 'to', 'is', 'was',
+    'are', 'were', 'it', 'he', 'she', 'they', 'we', 'you', 'his', 'her',
+    'my', 'their', 'our', 'all', 'had', 'have', 'has', 'not', 'but', 'can',
+    'will', 'one', 'two', 'day', 'time', 'room', 'man', 'said', 'school',
+    'desk', 'table', 'book', 'books', 'friends', 'could', 'would', 'should',
+    'after', 'before', 'out', 'up', 'down', 'by', 'as', 'so', 'from', 'into',
+    'monday', 'swami', 'morning', 'eyes', 'work', 'go', 'like', 'just', 'more'
+  };
+
   /// 100% Offline rule-based Braille text normalization:
   /// - Decodes Braille number prefix (#) to standard digits (#aiai -> 1719, #cj -> 30)
-  /// - Expands Grade 2 Braille single-letter words (b -> but, c -> can, x -> it)
+  /// - Expands Grade 2 Braille short-forms (fr -> friends, cd -> could, wd -> would)
+  /// - Context-guards Grade 2 single-letter expansions (b -> but, c -> can, x -> it)
+  ///   to prevent expanding isolated noise fragments into hallucinated words
   /// - Separates attached Braille conjunction contractions (e.g. "lifeand" -> "life and")
-  /// - Cleans stray OCR artifacts while maintaining original reading structure
+  /// - Cleans stray OCR noise clusters and trailing punctuation artifacts
   static String refineOffline(String rawText) {
     if (rawText.trim().isEmpty) return rawText;
 
@@ -70,43 +119,95 @@ class BrailleTextRefiner {
       (m) => '${m.group(1)} ${m.group(2)}',
     );
 
-    // 3. Expand Grade 2 single-letter words
+    // 3. Clean up common Braille OCR substitution artifacts
+    text = text.replaceAll('*', 'in');
+
+    // 4. Expand Grade 2 short-forms and context-guarded single-letter words
     final lines = text.split('\n');
     final processedLines = <String>[];
 
-    for (final line in lines) {
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+
+      // Filter out pure noise lines (e.g. "u::", "x''", "o", "::")
+      if (RegExp(r"^[^a-zA-Z0-9]*[a-zA-Z]?[^a-zA-Z0-9]*$").hasMatch(line)) {
+        continue;
+      }
+
       final words = line.split(RegExp(r'\s+'));
+      // Count words that look like genuine vocabulary (length >= 2 and mostly alphabetical)
+      final validWordCount = words.where((w) => RegExp(r'^[a-zA-Z]{2,}$').hasMatch(w)).length;
+      final isNoiseHeavyLine = validWordCount < 1 && words.length > 2;
+
+      final hasEnglishAnchor = words.any((word) {
+        final cw = word.replaceAll(RegExp(r"^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$"), '').toLowerCase();
+        return _commonEnglishAnchors.contains(cw) || _grade2ShortForms.containsKey(cw);
+      });
+
       final expandedWords = <String>[];
 
       for (final w in words) {
-        final lower = w.toLowerCase();
-        if (_grade2WordSigns.containsKey(lower)) {
-          // Preserve capitalization if first letter was uppercase
+        // Strip trailing and leading punctuation for dictionary lookup
+        final cleanWord = w.replaceAll(RegExp(r"^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$"), '');
+        final lower = cleanWord.toLowerCase();
+
+        // 4a. Grade 2 standard short-forms (fr -> friends, cd -> could, etc.)
+        if (_grade2ShortForms.containsKey(lower)) {
+          final expanded = _grade2ShortForms[lower]!;
+          expandedWords.add(w.replaceFirst(cleanWord, expanded));
+          continue;
+        }
+
+        // 4b. Grade 2 single-letter words (b -> but, c -> can, x -> it, etc.)
+        // Context guard: only expand if the line is not heavy noise and letter is not attached to noise
+        if (_grade2WordSigns.containsKey(lower) && !isNoiseHeavyLine) {
+          // Special exception: 'a' and 'I' are standard English words, don't alter
+          if (lower == 'a' || lower == 'i') {
+            expandedWords.add(lower == 'i' ? 'I' : 'a');
+            continue;
+          }
+
+          // Sensitive signs easily triggered by dot noise (e, m, q, d, u, t, h, g)
+          // Require at least one English anchor word in the line to prevent hallucinating words on noise
+          const sensitiveSigns = {'e', 'm', 'q', 'd', 'u', 't', 'h', 'g'};
+          if (sensitiveSigns.contains(lower) && !hasEnglishAnchor) {
+            expandedWords.add(w);
+            continue;
+          }
+
           final expanded = _grade2WordSigns[lower]!;
-          if (w.isNotEmpty && w[0] == w[0].toUpperCase() && w[0] != w[0].toLowerCase()) {
-            expandedWords.add('${expanded[0].toUpperCase()}${expanded.substring(1)}');
+          if (cleanWord.isNotEmpty && cleanWord[0] == cleanWord[0].toUpperCase() && cleanWord[0] != cleanWord[0].toLowerCase()) {
+            expandedWords.add(w.replaceFirst(cleanWord, '${expanded[0].toUpperCase()}${expanded.substring(1)}'));
           } else {
-            expandedWords.add(expanded);
+            expandedWords.add(w.replaceFirst(cleanWord, expanded));
           }
         } else {
           expandedWords.add(w);
         }
       }
-      processedLines.add(expandedWords.join(' '));
+
+      final assembledLine = expandedWords.join(' ').trim();
+      // Remove trailing orphan punctuation
+      final cleanedLine = assembledLine
+          .replaceAll(RegExp(r'\s+[;:\.\,\-\*\?\!/]+$'), '')
+          .replaceAll(RegExp(r'^[;:\.\,\-\*\?\!/]+\s+'), '')
+          .replaceAll(RegExp(r'[;]{2,}'), ';');
+
+      if (cleanedLine.isNotEmpty) {
+        processedLines.add(cleanedLine);
+      }
     }
 
-    String result = processedLines.join('\n');
-
-    // 4. Clean up common Braille OCR substitution artifacts (e.g. * often represents "in")
-    result = result.replaceAll('*', 'in');
-
-    return result.trim();
+    return processedLines.join('\n').trim();
   }
+
 
   /// AI Generative Text Reconstruction:
   /// Uses Google Gemini API (or compatible LLM) to convert degraded / partially-illegible
   /// Braille OCR output into fluent, grammatically accurate English text.
-  /// Falls back to [refineOffline] if network or API key is unavailable.
+  /// Falls back to [refineOffline] if network or temporary server error occurs.
+  /// Throws [InvalidApiKeyException] if the API key is a dummy placeholder or rejected by Google.
   static Future<String> refineWithAi(
     String rawText, {
     String? apiKey,
@@ -117,21 +218,28 @@ class BrailleTextRefiner {
       return offlineCleaned;
     }
 
+    final cleanKey = apiKey.trim();
+    if (cleanKey.toUpperCase().contains('YOUR_GEMINI_API_KEY')) {
+      throw InvalidApiKeyException('API key is a placeholder ("YOUR_GEMINI_API_KEY"). Please configure a valid key from Google AI Studio.');
+    }
+
     final httpClient = client ?? http.Client();
 
     try {
       final uri = Uri.parse(
-        'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey',
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$cleanKey',
       );
 
-      final prompt = '''You are an expert assistive OCR post-processor for blind users. 
-The following text was extracted by a computer vision model from an embossed Braille page. 
-It contains minor OCR typos, missing letters, and Braille contraction artifacts. 
+      final prompt = '''You are an expert assistive Braille transcription restorer for visually impaired users.
+The text below was captured by an optical camera scanning an embossed Braille page printed in Unified English Braille (UEB Grade 2 contracted Braille).
+Because of camera resolution, embossing shadows, and Braille shorthand contractions (such as "fr" for friends, "x" for it, single-cell contractions like "and", "the", "ed", "ou", "wh"), the raw OCR transcription contains partial phonetic spellings, missing letters, and contraction artifacts.
 
-Reconstruct the text into fluent, legible, grammatically correct English matching the intended meaning. 
-Do not add unsolicited commentary, explanations, or formatting markers. Output only the restored text.
+TASK:
+Reconstruct this into the complete, grammatically correct, fluent English text intended by the author.
+Preserve paragraph, heading, and dialogue structure. Accurately correct OCR typos and expand Braille shorthand.
+Do not include conversational filler, notes, disclaimers, or markdown formatting blocks. Output ONLY the clean restored text.
 
-RAW BRAILLE OCR TEXT:
+RAW BRAILLE OCR TRANSCRIPTION:
 $offlineCleaned''';
 
       final response = await httpClient
@@ -146,11 +254,11 @@ $offlineCleaned''';
               ],
               'generationConfig': {
                 'temperature': 0.2,
-                'maxOutputTokens': 1024,
+                'maxOutputTokens': 1500,
               }
             }),
           )
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 12));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -165,9 +273,15 @@ $offlineCleaned''';
             }
           }
         }
+      } else if (response.statusCode == 400 || response.statusCode == 403) {
+        debugPrint('AI refinement returned authentication/key error: ${response.statusCode}');
+        throw InvalidApiKeyException('Gemini API key is invalid or unauthorized (HTTP ${response.statusCode}).');
       }
+
       debugPrint('AI refinement returned status ${response.statusCode}, using offline refined text.');
       return offlineCleaned;
+    } on InvalidApiKeyException {
+      rethrow;
     } catch (e) {
       debugPrint('AI refinement fallback note: $e');
       return offlineCleaned;

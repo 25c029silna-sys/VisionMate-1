@@ -65,11 +65,11 @@ class EmergencyService {
     return 'Emergency alert: I need help. My location is https://maps.google.com/?q=${position.latitude},${position.longitude} (${position.latitude}, ${position.longitude}).';
   }
 
-  /// Triggers full emergency workflow globally with a 3-second cancellation window via voice input.
+  /// Triggers full emergency workflow globally with an 8-second cancellation window via voice input.
   Future<bool> executeGlobalSos({
     required dynamic storageService,
     required dynamic voiceService,
-    Duration cancellationWindow = const Duration(seconds: 3),
+    Duration cancellationWindow = const Duration(seconds: 8),
   }) async {
     final contact = await storageService.getTrustedContact();
     final String phone = contact['phone'] ?? '';
@@ -82,9 +82,9 @@ class EmergencyService {
       return false;
     }
 
-    // 1. Announce SOS activation with 3-second voice cancellation prompt
+    // 1. Announce SOS activation with 8-second voice cancellation prompt
     await voiceService.speak(
-      'Emergency SOS activated by shake gesture. Say CANCEL within 3 seconds to cancel.',
+      'Emergency SOS activated by shake gesture. Say CANCEL within 8 seconds to cancel.',
       awaitCompletion: true,
     );
 
@@ -95,7 +95,7 @@ class EmergencyService {
       return false;
     }
 
-    // 3. If not cancelled within 3 seconds, proceed with dispatch
+    // 3. If not cancelled within 8 seconds, proceed with dispatch
     await voiceService.speak('Sending emergency alert to $name.');
 
     try {

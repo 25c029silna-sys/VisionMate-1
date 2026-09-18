@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -34,6 +35,7 @@ class _SceneScreenState extends State<SceneScreen> {
   bool isAnalyzing = false;
   bool isFlashOn = false;
   bool isListening = false;
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -90,6 +92,7 @@ class _SceneScreenState extends State<SceneScreen> {
   }
 
   Future<void> _handleVoiceCommand() async {
+    _retryTimer?.cancel();
     if (isListening) {
       await voiceService.stopListening();
       if (mounted) {
@@ -113,7 +116,14 @@ class _SceneScreenState extends State<SceneScreen> {
       isListening = false;
     });
 
-    if (command == null || command.trim().isEmpty) return;
+    if (command == null || command.trim().isEmpty) {
+      if (mounted) {
+        setState(() {
+          result = 'Tap microphone button to speak a command.';
+        });
+      }
+      return;
+    }
 
     final lower = command.toLowerCase().trim();
     if (lower.contains('stop')) {
@@ -133,6 +143,11 @@ class _SceneScreenState extends State<SceneScreen> {
       await voiceService.speak('Available commands: say Describe to analyze surroundings, Repeat to hear again, Flash to toggle flashlight, or Back to exit.');
     } else {
       await voiceService.speak('Command not recognized. Say Describe, Repeat, Flash, or Back.');
+      if (mounted) {
+        setState(() {
+          result = 'Tap microphone button to speak a command.';
+        });
+      }
     }
   }
 
@@ -179,6 +194,10 @@ class _SceneScreenState extends State<SceneScreen> {
 
   @override
   void dispose() {
+    _retryTimer?.cancel();
+    if (isFlashOn) {
+      cameraService.toggleFlash(false);
+    }
     cameraService.dispose();
     sceneService.dispose();
     super.dispose();
