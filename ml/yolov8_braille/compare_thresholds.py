@@ -1,14 +1,18 @@
+import sys
+import os
+import re
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from test_cleaned_output import get_complete_braille_map, nms
-import re
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from ml.braille_ocr import louis
+from test_cleaned_output import nms
 
 interp = tf.lite.Interpreter('app/assets/models/yolov8_braille.tflite')
 interp.allocate_tensors()
 inp = interp.get_input_details()[0]['index']
 out = interp.get_output_details()[0]['index']
-bmap = get_complete_braille_map()
 punct_classes = {1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 24, 25, 26}
 
 for img_name in ['close_crop.jpg']:
@@ -58,15 +62,20 @@ for img_name in ['close_crop.jpg']:
             last_x2 = -1
             for d in l:
                 if last_x2 > 0 and (d['x1'] - last_x2) > threshold:
-                    chars.append(' ')
+                    if chars and chars[-1] != ' ':
+                        chars.append(' ')
                 last_x2 = d['x2']
-                chars.append(bmap.get(f"{d['cls']:06b}", ''))
-            raw = "".join(chars)
-            cleaned = re.sub(r"(?<=\s)[;',\-\*\.\:\?\!/]+(?=\s|$)", '', raw)
-            cleaned = re.sub(r"^[;',\-\*\.\:\?\!/]+\s*", '', cleaned)
-            cleaned = re.sub(r"\s*[;',\-\*\.\:\?\!/]+$", '', cleaned)
-            cleaned = re.sub(r'([a-zA-Z0-9])[;:]+([a-zA-Z0-9])', r'\1\2', cleaned)
-            cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
-            if cleaned: clean_lines.append(cleaned)
-        print(f"\n*** {img_name} with mult={threshold_mult} (thresh={threshold:.1f}px, med_w={med_w:.1f}px) ***")
-        print("\n".join(clean_lines[:8]))
+                bin_str = f"{d['cls']:06b}"
+                d1, d2, d3, d4, d5, d6 = [int(ch) for ch in bin_str]
+                mask = d1 | (d2 << 1) | (d3 << 2) | (d4 << 3) | (d5 << 4) | (d6 << 5)
+                if mask == 0:
+                    if chars and chars[-1] != ' ':
+                        chars.append(' ')
+                else:
+                    chars.append(chr(0x2800 + mask))
+            raw_u = "".join(chars).strip()
+            if raw_u:
+                eng = louis.backTranslateString(['en-ueb-g2.ctb'], raw_u)
+                clean_lines.append(eng)
+        print(f"\n================ THRESHOLD {threshold_mult}x ({img_name}) ================")
+        print("\n".join(clean_lines[:10]))

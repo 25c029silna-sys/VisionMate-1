@@ -20,70 +20,6 @@ class BrailleTextRefiner {
     'f': '6', 'g': '7', 'h': '8', 'i': '9', 'j': '0',
   };
 
-  static const Map<String, String> _grade2WordSigns = {
-    'b': 'but',
-    'c': 'can',
-    'd': 'do',
-    'e': 'every',
-    'f': 'from',
-    'g': 'go',
-    'h': 'have',
-    'j': 'just',
-    'k': 'knowledge',
-    'l': 'like',
-    'm': 'more',
-    'n': 'not',
-    'p': 'people',
-    'q': 'quite',
-    'r': 'rather',
-    's': 'so',
-    't': 'that',
-    'u': 'us',
-    'v': 'very',
-    'w': 'will',
-    'x': 'it',
-    'y': 'you',
-    'z': 'as',
-  };
-
-  static const Map<String, String> _grade2ShortForms = {
-    'fr': 'friends',
-    'cd': 'could',
-    'wd': 'would',
-    'sd': 'should',
-    'af': 'after',
-    'ab': 'about',
-    'al': 'also',
-    'alt': 'although',
-    'alw': 'always',
-    'bef': 'before',
-    'beh': 'behind',
-    'bel': 'below',
-    'bes': 'beside',
-    'bt': 'between',
-    'chn': 'children',
-    'fa': 'father',
-    'rm': 'room',
-    'hm': 'him',
-    'hmf': 'himself',
-    'myf': 'myself',
-    'td': 'today',
-    'tm': 'tomorrow',
-    'tn': 'tonight',
-    'yr': 'your',
-    'yrf': 'yourself',
-  };
-
-  static const Set<String> _commonEnglishAnchors = {
-    'the', 'and', 'with', 'for', 'of', 'in', 'on', 'at', 'to', 'is', 'was',
-    'are', 'were', 'it', 'he', 'she', 'they', 'we', 'you', 'his', 'her',
-    'my', 'their', 'our', 'all', 'had', 'have', 'has', 'not', 'but', 'can',
-    'will', 'one', 'two', 'day', 'time', 'room', 'man', 'said', 'school',
-    'desk', 'table', 'book', 'books', 'friends', 'could', 'would', 'should',
-    'after', 'before', 'out', 'up', 'down', 'by', 'as', 'so', 'from', 'into',
-    'monday', 'swami', 'morning', 'eyes', 'work', 'go', 'like', 'just', 'more'
-  };
-
   /// 100% Offline rule-based Braille text normalization:
   /// - Decodes Braille number prefix (#) to standard digits (#aiai -> 1719, #cj -> 30)
   /// - Expands Grade 2 Braille short-forms (fr -> friends, cd -> could, wd -> would)
@@ -136,58 +72,7 @@ class BrailleTextRefiner {
       }
 
       final words = line.split(RegExp(r'\s+'));
-      // Count words that look like genuine vocabulary (length >= 2 and mostly alphabetical)
-      final validWordCount = words.where((w) => RegExp(r'^[a-zA-Z]{2,}$').hasMatch(w)).length;
-      final isNoiseHeavyLine = validWordCount < 1 && words.length > 2;
-
-      final hasEnglishAnchor = words.any((word) {
-        final cw = word.replaceAll(RegExp(r"^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$"), '').toLowerCase();
-        return _commonEnglishAnchors.contains(cw) || _grade2ShortForms.containsKey(cw);
-      });
-
-      final expandedWords = <String>[];
-
-      for (final w in words) {
-        // Strip trailing and leading punctuation for dictionary lookup
-        final cleanWord = w.replaceAll(RegExp(r"^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$"), '');
-        final lower = cleanWord.toLowerCase();
-
-        // 4a. Grade 2 standard short-forms (fr -> friends, cd -> could, etc.)
-        if (_grade2ShortForms.containsKey(lower)) {
-          final expanded = _grade2ShortForms[lower]!;
-          expandedWords.add(w.replaceFirst(cleanWord, expanded));
-          continue;
-        }
-
-        // 4b. Grade 2 single-letter words (b -> but, c -> can, x -> it, etc.)
-        // Context guard: only expand if the line is not heavy noise and letter is not attached to noise
-        if (_grade2WordSigns.containsKey(lower) && !isNoiseHeavyLine) {
-          // Special exception: 'a' and 'I' are standard English words, don't alter
-          if (lower == 'a' || lower == 'i') {
-            expandedWords.add(lower == 'i' ? 'I' : 'a');
-            continue;
-          }
-
-          // Sensitive signs easily triggered by dot noise (e, m, q, d, u, t, h, g)
-          // Require at least one English anchor word in the line to prevent hallucinating words on noise
-          const sensitiveSigns = {'e', 'm', 'q', 'd', 'u', 't', 'h', 'g'};
-          if (sensitiveSigns.contains(lower) && !hasEnglishAnchor) {
-            expandedWords.add(w);
-            continue;
-          }
-
-          final expanded = _grade2WordSigns[lower]!;
-          if (cleanWord.isNotEmpty && cleanWord[0] == cleanWord[0].toUpperCase() && cleanWord[0] != cleanWord[0].toLowerCase()) {
-            expandedWords.add(w.replaceFirst(cleanWord, '${expanded[0].toUpperCase()}${expanded.substring(1)}'));
-          } else {
-            expandedWords.add(w.replaceFirst(cleanWord, expanded));
-          }
-        } else {
-          expandedWords.add(w);
-        }
-      }
-
-      final assembledLine = expandedWords.join(' ').trim();
+      final assembledLine = words.join(' ').trim();
       // Remove trailing orphan punctuation
       final cleanedLine = assembledLine
           .replaceAll(RegExp(r'\s+[;:\.\,\-\*\?\!/]+$'), '')

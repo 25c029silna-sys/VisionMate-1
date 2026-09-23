@@ -1,7 +1,12 @@
+import sys
+import os
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from test_cleaned_output import get_complete_braille_map, nms
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from ml.braille_ocr import louis
+from test_cleaned_output import nms
 
 interp = tf.lite.Interpreter('app/assets/models/yolov8_braille.tflite')
 interp.allocate_tensors()
@@ -47,25 +52,21 @@ for d in dets:
     else: curr.sort(key=lambda x: x['cx']); lines.append(curr); curr = [d]; line_y = d['cy']
 if curr: curr.sort(key=lambda x: x['cx']); lines.append(curr)
 
-bmap = get_complete_braille_map()
 print(f"med_w: {med_w:.2f}, med_h: {med_h:.2f}")
-all_gaps = []
 for idx, l in enumerate(lines):
     print(f"\n--- Line {idx} ({len(l)} chars) ---")
     last_x2 = -1
-    line_str = []
+    line_u = []
     for d in l:
-        char = bmap.get(f"{d['cls']:06b}", '?')
-        line_str.append(char)
+        bin_str = f"{d['cls']:06b}"
+        d1, d2, d3, d4, d5, d6 = [int(ch) for ch in bin_str]
+        mask = d1 | (d2 << 1) | (d3 << 2) | (d4 << 3) | (d5 << 4) | (d6 << 5)
+        u_char = ' ' if mask == 0 else chr(0x2800 + mask)
+        line_u.append(u_char)
         if last_x2 > 0:
             gap = d['x1'] - last_x2
-            all_gaps.append(gap)
-            ratio = gap / med_w
-            print(f"  -> '{char}' w={d['w']:.1f}, gap={gap:.2f} (gap/med_w = {ratio:.2f})")
-        else:
-            print(f"  First '{char}' w={d['w']:.1f}")
+            if gap > med_w * 0.8:
+                print(f"  Gap after '{line_u[-2]}': {gap:.1f}px ({gap/med_w:.2f} * med_w)")
         last_x2 = d['x2']
-    print(f"Chars: {''.join(line_str)}")
-
-all_gaps = np.array(all_gaps)
-print(f"\nGaps summary: min={all_gaps.min():.2f}, 25%={np.percentile(all_gaps, 25):.2f}, 50%={np.median(all_gaps):.2f}, 75%={np.percentile(all_gaps, 75):.2f}, max={all_gaps.max():.2f}")
+    u_str = "".join(line_u)
+    print(f"Line Braille: {u_str} -> Liblouis: {louis.backTranslateString(['en-ueb-g2.ctb'], u_str)}")

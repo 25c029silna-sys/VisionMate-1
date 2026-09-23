@@ -27,6 +27,7 @@ venv/
 
 # Model artifacts
 **/*.tflite
+!app/assets/models/*.tflite
 **/*.onnx
 **/*.h5
 

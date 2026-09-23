@@ -8,29 +8,9 @@ def refine_offline(raw_text):
         return "".join(num_map.get(c, c) for c in chars)
     text = re.sub(r'#([a-jA-J]+)', decode_number, raw_text)
 
-    # 2. Grade 2 single-letter standalone word contractions
-    single_letter_words = {
-        'b': 'but', 'c': 'can', 'd': 'do', 'e': 'every', 'f': 'from',
-        'g': 'go', 'h': 'have', 'j': 'just', 'k': 'knowledge', 'l': 'like',
-        'm': 'more', 'n': 'not', 'p': 'people', 'q': 'quite', 'r': 'rather',
-        's': 'so', 't': 'that', 'u': 'us', 'v': 'very', 'w': 'will',
-        'x': 'it', 'y': 'you', 'z': 'as'
-    }
-    
-    # 3. Braille compound contractions separation: "lifeand" -> "life and", "dighand" -> "dig and"
+    # 2. Braille compound contractions separation: "lifeand" -> "life and", "dighand" -> "dig and"
     text = re.sub(r'([a-zA-Z]{3,})(and|with|for|the|of)\b', r'\1 \2', text)
     text = re.sub(r'\b(and|with|for|the|of)([a-zA-Z]{3,})', r'\1 \2', text)
-
-    # 4. Replace single letter words
-    words = text.split()
-    expanded_words = []
-    for w in words:
-        lower = w.lower()
-        if lower in single_letter_words:
-            expanded_words.append(single_letter_words[lower])
-        else:
-            expanded_words.append(w)
-    text = " ".join(expanded_words)
 
     # 5. Common Braille OCR character confusions & cleaning
     text = text.replace('*', 'in') # asterisk / dots 3,5 is often confused with 'in' (dots 3,5)

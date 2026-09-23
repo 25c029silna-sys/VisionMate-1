@@ -41,9 +41,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/models/braille_cnn.tflite
+    # - assets/models/braille_cnn.tflite
     - assets/models/yolov8_braille.tflite
-    - assets/models/yolov8n.tflite
-    - assets/models/minilm.tflite
+    # - assets/models/yolov8n.tflite
+    # - assets/models/minilm.tflite
     - assets/labels/braille_labels.txt
     - assets/labels/yolo_labels.txt

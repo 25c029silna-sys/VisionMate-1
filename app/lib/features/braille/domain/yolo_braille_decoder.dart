@@ -53,7 +53,7 @@ class YoloBrailleDecoder {
     '010010': ':',
     '010011': '.',
     '010100': 'i',
-    '010101': 'en',
+    '010101': '',
     '010110': 'j',
     '010111': 'w',
     '011000': ';',
@@ -61,17 +61,17 @@ class YoloBrailleDecoder {
     '011010': '!',
     '011011': '(',
     '011100': 's',
-    '011101': 'the',
+    '011101': '',
     '011110': 't',
-    '011111': 'with',
+    '011111': '',
     '100000': 'a',
-    '100001': 'ch',
+    '100001': '',
     '100010': 'e',
-    '100011': 'sh',
+    '100011': '',
     '100100': 'c',
-    '100101': 'wh',
+    '100101': '',
     '100110': 'd',
-    '100111': 'th',
+    '100111': '',
     '101000': 'k',
     '101001': 'u',
     '101010': 'o',
@@ -81,22 +81,38 @@ class YoloBrailleDecoder {
     '101110': 'n',
     '101111': 'y',
     '110000': 'b',
-    '110001': 'gh',
+    '110001': '',
     '110010': 'h',
-    '110011': 'ou',
+    '110011': '',
     '110100': 'f',
-    '110101': 'ed',
+    '110101': '',
     '110110': 'g',
-    '110111': 'er',
+    '110111': '',
     '111000': 'l',
     '111001': 'v',
     '111010': 'r',
-    '111011': 'for',
+    '111011': '',
     '111100': 'p',
-    '111101': 'and',
+    '111101': '',
     '111110': 'q',
-    '111111': 'of',
+    '111111': '',
   };
+
+  /// Converts a 6-dot binary code string to its standard Unicode Braille character (U+2800..U+283F).
+  /// Formula: 0x2800 + (d1*1 + d2*2 + d3*4 + d4*8 + d5*16 + d6*32)
+  /// Empty cell (sum == 0) maps strictly to a literal space ' '.
+  static String binaryCodeToUnicode(String binaryCode) {
+    if (binaryCode.isEmpty) return ' ';
+    int d1 = binaryCode.length > 0 && binaryCode[0] == '1' ? 1 : 0;
+    int d2 = binaryCode.length > 1 && binaryCode[1] == '1' ? 1 : 0;
+    int d3 = binaryCode.length > 2 && binaryCode[2] == '1' ? 1 : 0;
+    int d4 = binaryCode.length > 3 && binaryCode[3] == '1' ? 1 : 0;
+    int d5 = binaryCode.length > 4 && binaryCode[4] == '1' ? 1 : 0;
+    int d6 = binaryCode.length > 5 && binaryCode[5] == '1' ? 1 : 0;
+    int mask = (d1 * 1) + (d2 * 2) + (d3 * 4) + (d4 * 8) + (d5 * 16) + (d6 * 32);
+    if (mask == 0) return ' ';
+    return String.fromCharCode(0x2800 + mask);
+  }
 
   static const Map<String, String> numberMap = {
     'a': '1', 'b': '2', 'c': '3', 'd': '4', 'e': '5',
@@ -314,12 +330,12 @@ class YoloBrailleDecoder {
       double lastCx = -1.0;
 
       for (final d in line) {
-        // Dual center-to-center and edge-to-edge word spacing detector:
-        // Center-to-center distance between adjacent cells in the same word is ~ 1.0 to 1.2 * medianW.
-        // When there is an empty space (one missing cell), center-to-center distance is >= 1.55 * medianW.
-        // Edge-to-edge gap (d.x1 - lastX2) exceeds 0.65 * medianW for a blank cell.
-        final bool isSpace = (lastCx > 0 && (d.cx - lastCx) > (medianW * 1.55)) ||
-                             (lastX2 > 0 && (d.x1 - lastX2) > (medianW * 0.65));
+        // Dynamic Spacing Calibration:
+        // Do NOT emit an empty space ' ' unless the horizontal gap between two consecutive 2x3 cells
+        // is strictly greater than 1.5 times the inter-cell pitch (cx).
+        // Any gap smaller than this MUST be treated as contiguous characters within the same word.
+        final double cx = medianW * 1.20;
+        final bool isSpace = lastCx > 0 && (d.cx - lastCx) > (1.5 * cx);
         if (isSpace) {
           buffer.write(' ');
           isNumberMode = false;
@@ -366,7 +382,10 @@ class YoloBrailleDecoder {
         .replaceAll(RegExp(r"\s*[;',\-\*\.\:\?\!/]+$"), '');
 
     // 2. Remove stray semicolons/punctuation embedded inside words (e.g. "u;k" -> "uk", "l;k" -> "lk")
-    cleaned = cleaned.replaceAll(RegExp(r'([a-zA-Z0-9])[;:]+([a-zA-Z0-9])'), r'$1$2');
+    cleaned = cleaned.replaceAllMapped(
+      RegExp(r'([a-zA-Z0-9])[;:]+([a-zA-Z0-9])'),
+      (m) => '${m[1]}${m[2]}',
+    );
 
     // 3. Collapse multiple consecutive punctuation marks
     cleaned = cleaned.replaceAll(RegExp(r'[;]{2,}'), ';');

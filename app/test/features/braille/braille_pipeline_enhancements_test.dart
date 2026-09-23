@@ -114,22 +114,17 @@ void main() {
   });
 
   group('Braille Pipeline Enhancements - BrailleTextRefiner', () {
-    test('expands Grade 2 short-forms correctly', () {
+    test('does not use custom dictionary substitutions', () {
       final input = 'fr and chn cd go to rm';
       final refined = BrailleTextRefiner.refineOffline(input);
-      expect(refined, contains('friends'));
-      expect(refined, contains('children'));
-      expect(refined, contains('could'));
-      expect(refined, contains('room'));
+      // Confirms custom dictionaries (which expanded 'fr' -> 'friends', 'c' -> 'can') are removed
+      expect(refined, equals('fr and chn cd go to rm'));
     });
 
-    test('expands Grade 2 single-letter words cleanly', () {
+    test('preserves raw letters and does not expand single letters without liblouis', () {
       final input = 'c y go to rm';
       final refined = BrailleTextRefiner.refineOffline(input);
-      expect(refined, contains('can'));
-      expect(refined, contains('you'));
-      expect(refined, contains('go'));
-      expect(refined, contains('room'));
+      expect(refined, equals('c y go to rm'));
     });
 
     test('context guards single-letter words on noise-heavy lines', () {
@@ -225,14 +220,14 @@ it was monday morning
       });
 
       final result = await BrailleTextRefiner.refineWithAi(
-        'fr and chn',
+        '#cj lifeand light',
         apiKey: '   ',
         client: mockClient,
       );
 
       expect(clientCalled, isFalse);
-      expect(result, contains('friends'));
-      expect(result, contains('children'));
+      expect(result, contains('30'));
+      expect(result, contains('life and light'));
     });
 
     test('refineWithAi gracefully falls back to offline text on network exceptions / timeouts', () async {
@@ -241,13 +236,13 @@ it was monday morning
       });
 
       final result = await BrailleTextRefiner.refineWithAi(
-        'fr and chn',
+        '#cj lifeand light',
         apiKey: 'AIzaSyTestKey',
         client: mockClient,
       );
 
-      expect(result, contains('friends'));
-      expect(result, contains('children'));
+      expect(result, contains('30'));
+      expect(result, contains('life and light'));
     });
   });
 }

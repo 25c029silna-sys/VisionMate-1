@@ -1,8 +1,13 @@
+import sys
+import os
+import re
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from test_cleaned_output import get_complete_braille_map, nms
-import re
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from ml.braille_ocr import louis
+from test_cleaned_output import nms
 
 interp = tf.lite.Interpreter('app/assets/models/yolov8_braille.tflite')
 interp.allocate_tensors()
@@ -48,8 +53,6 @@ for d in dets:
     else: curr.sort(key=lambda x: x['cx']); lines.append(curr); curr = [d]; line_y = d['cy']
 if curr: curr.sort(key=lambda x: x['cx']); lines.append(curr)
 
-bmap = get_complete_braille_map()
-
 for mult in [1.5, 2.0, 2.5, 3.0, 3.5]:
     threshold = med_w * mult
     result_lines = []
@@ -58,17 +61,21 @@ for mult in [1.5, 2.0, 2.5, 3.0, 3.5]:
         last_x2 = -1
         for d in l:
             if last_x2 > 0 and (d['x1'] - last_x2) > threshold:
-                chars.append(' ')
+                if chars and chars[-1] != ' ':
+                    chars.append(' ')
             last_x2 = d['x2']
-            chars.append(bmap.get(f"{d['cls']:06b}", ''))
-        raw = "".join(chars)
-        cleaned = re.sub(r'(?<=\s)[;\',\-\*\.\:\?\!/]+(?=\s|$)', '', raw)
-        cleaned = re.sub(r'^[;\',\-\*\.\:\?\!/]+\s*', '', cleaned)
-        cleaned = re.sub(r'\s*[;\',\-\*\.\:\?\!/]+$', '', cleaned)
-        cleaned = re.sub(r'([a-zA-Z0-9])[;:]+([a-zA-Z0-9])', r'\1\2', cleaned)
-        cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
-        if cleaned:
-            result_lines.append(cleaned)
+            bin_str = f"{d['cls']:06b}"
+            d1, d2, d3, d4, d5, d6 = [int(ch) for ch in bin_str]
+            mask = d1 | (d2 << 1) | (d3 << 2) | (d4 << 3) | (d5 << 4) | (d6 << 5)
+            if mask == 0:
+                if chars and chars[-1] != ' ':
+                    chars.append(' ')
+            else:
+                chars.append(chr(0x2800 + mask))
+        raw_unicode = "".join(chars).strip()
+        if raw_unicode:
+            translated = louis.backTranslateString(['en-ueb-g2.ctb'], raw_unicode)
+            result_lines.append(translated)
     print(f"\n================ MULTIPLIER {mult} (thresh={threshold:.1f}px) ================")
     for rl in result_lines[:10]:
         print(rl)

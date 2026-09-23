@@ -1,16 +1,15 @@
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from test_cleaned_output import get_complete_braille_map, nms
+from test_cleaned_output import nms
 import re
 
 def letterbox(im, new_shape=(640, 640), color=(114, 114, 114)):
-    # Resize and pad image while meeting stride-multiple constraints
     shape = im.size # (w, h)
     r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
     new_unpad = (int(round(shape[0] * r)), int(round(shape[1] * r)))
-    dw, dh = new_shape[0] - new_unpad[0], new_shape[1] - new_unpad[1] # wh padding
-    dw /= 2 # divide padding into 2 sides
+    dw, dh = new_shape[0] - new_unpad[0], new_shape[1] - new_unpad[1]
+    dw /= 2
     dh /= 2
 
     if shape != new_unpad:
@@ -18,7 +17,6 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114)):
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
     
-    # Create letterboxed canvas
     new_im = Image.new('RGB', new_shape, color)
     new_im.paste(im, (left, top))
     return new_im, r, (left, top)
@@ -27,7 +25,6 @@ interp = tf.lite.Interpreter('app/assets/models/yolov8_braille.tflite')
 interp.allocate_tensors()
 inp = interp.get_input_details()[0]['index']
 out = interp.get_output_details()[0]['index']
-bmap = get_complete_braille_map()
 punct_classes = {1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19, 24, 25, 26}
 
 for mode in ['squished', 'letterbox']:

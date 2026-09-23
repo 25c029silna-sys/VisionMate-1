@@ -1,75 +1,11 @@
 import numpy as np
 from PIL import Image, ImageOps
 import tensorflow as tf
+import sys
+import os
 
-def get_complete_braille_map():
-    # Complete 64-character Braille dictionary (Binary: Dot 1, 2, 3, 4, 5, 6)
-    return {
-        '000000': ' ',
-        '000001': ',',       # Capital sign / comma
-        '000010': '',        # Accent
-        '000011': ';',
-        '000100': '',        # Accent
-        '000101': '/',
-        '000110': '',
-        '000111': '?',
-        '001000': '\'',      # Apostrophe
-        '001001': '-',       # Hyphen
-        '001010': '*',       # Asterisk
-        '001011': '.',
-        '001100': '"',       # Quotation
-        '001101': '_',
-        '001110': '',
-        '001111': '#',       # Number sign
-        '010000': ';',
-        '010001': ',',
-        '010010': ':',       # Colon
-        '010011': '.',       # Period
-        '010100': 'i',
-        '010101': 'en',
-        '010110': 'j',
-        '010111': 'w',
-        '011000': ';',
-        '011001': '?',
-        '011010': '!',       # Exclamation
-        '011011': '(',       # Parenthesis
-        '011100': 's',
-        '011101': 'the',
-        '011110': 't',
-        '011111': 'with',
-        '100000': 'a',
-        '100001': 'ch',
-        '100010': 'e',
-        '100011': 'sh',
-        '100100': 'c',
-        '100101': 'wh',
-        '100110': 'd',
-        '100111': 'th',
-        '101000': 'k',
-        '101001': 'u',
-        '101010': 'o',
-        '101011': 'z',
-        '101100': 'm',
-        '101101': 'x',
-        '101110': 'n',
-        '101111': 'y',
-        '110000': 'b',
-        '110001': 'gh',
-        '110010': 'h',
-        '110011': 'ou',
-        '110100': 'f',
-        '110101': 'ed',
-        '110110': 'g',
-        '110111': 'er',
-        '111000': 'l',
-        '111001': 'v',
-        '111010': 'r',
-        '111011': 'for',
-        '111100': 'p',
-        '111101': 'and',
-        '111110': 'q',
-        '111111': 'of'
-    }
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from ml.braille_ocr import louis
 
 def nms(boxes, scores, iou_threshold=0.40):
     if len(boxes) == 0:
@@ -192,50 +128,44 @@ def test_transposed(img_path="ml/yolov8_braille/captured_phone.jpg", conf_thresh
         current_line.sort(key=lambda x: x['cx'])
         lines.append(current_line)
 
-    braille_map = get_complete_braille_map()
-    number_map = {
-        'a': '1', 'b': '2', 'c': '3', 'd': '4', 'e': '5',
-        'f': '6', 'g': '7', 'h': '8', 'i': '9', 'j': '0'
-    }
+    unicode_lines = []
+    translated_lines = []
 
-    full_text = []
     for line in lines:
-        line_chars = []
+        chars = []
         last_x = -1
-        is_number = False
-        is_capital = False
-
         for d in line:
             if last_x > 0 and (d['cx'] - last_x) > (median_w * 1.5):
-                line_chars.append(' ')
-                is_number = False
+                if chars and chars[-1] != ' ':
+                    chars.append(' ')
             last_x = d['cx']
 
             bin_str = f"{d['class']:06b}"
-            raw = braille_map.get(bin_str, '?')
+            d1 = int(bin_str[0])
+            d2 = int(bin_str[1])
+            d3 = int(bin_str[2])
+            d4 = int(bin_str[3])
+            d5 = int(bin_str[4])
+            d6 = int(bin_str[5])
 
-            if raw == '#':
-                is_number = True
-                continue
-            if raw == ',':
-                is_capital = True
-                continue
+            mask = d1 | (d2 << 1) | (d3 << 2) | (d4 << 3) | (d5 << 4) | (d6 << 5)
+            if mask == 0:
+                if chars and chars[-1] != ' ':
+                    chars.append(' ')
+            else:
+                chars.append(chr(0x2800 + mask))
 
-            char = raw
-            if is_number and raw in number_map:
-                char = number_map[raw]
-            elif is_capital:
-                char = raw.upper()
-                is_capital = False
+        u_line = "".join(chars).strip()
+        if not u_line:
+            continue
+        eng_line = louis.backTranslateString(['en-ueb-g2.ctb'], u_line)
+        unicode_lines.append(u_line)
+        translated_lines.append(eng_line)
 
-            line_chars.append(char)
-        full_text.append("".join(line_chars))
-
-    result = "\n".join(full_text)
     print("\n" + "="*60)
-    print("DECODED TEXT (WITH AUTO-ORIENTATION & COMPLETE MAP):")
+    print("DECODED TEXT (UNICODE BRAILLE + PURE LIBLOUIS):")
     print("="*60)
-    print(result)
+    print("\n".join(translated_lines))
     print("="*60)
 
 if __name__ == '__main__':

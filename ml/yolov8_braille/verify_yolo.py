@@ -1,21 +1,11 @@
 import os
-import json
+import sys
 import numpy as np
 from PIL import Image
 import tensorflow as tf
 
-def load_braille_map():
-    braille_char_map = {
-        '100000': 'a', '110000': 'b', '100100': 'c', '100110': 'd', '100010': 'e',
-        '110100': 'f', '110110': 'g', '110010': 'h', '010100': 'i', '010110': 'j',
-        '101000': 'k', '111000': 'l', '101100': 'm', '101110': 'n', '101010': 'o',
-        '111100': 'p', '111110': 'q', '111010': 'r', '011100': 's', '011110': 't',
-        '101001': 'u', '111001': 'v', '010111': 'w', '101101': 'x', '101111': 'y',
-        '101011': 'z', '001111': '#', '000001': ',', '001000': '\'', '001010': '*',
-        '010010': ':', '010011': '.', '011010': '!', '010000': ';', '001001': '-',
-        '000101': '/', '010101': '(', '010111': ')', '000111': '?'
-    }
-    return braille_char_map
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from ml.braille_ocr import louis
 
 def nms(boxes, scores, iou_threshold=0.45):
     if len(boxes) == 0:
@@ -47,13 +37,15 @@ def nms(boxes, scores, iou_threshold=0.45):
 
 def verify(tflite_path="ml/yolov8_braille/yolov8_braille.tflite", img_path="AngelinaReader/DSBI/data/Fundamentals of Massage/FM+1+recto.jpg"):
     print("Testing YOLOv8 Braille TFLite Inference on:", img_path)
+    if not os.path.exists(img_path):
+        print(f"Sample image not found: {img_path}")
+        return
     interpreter = tf.lite.Interpreter(model_path=tflite_path)
     interpreter.allocate_tensors()
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
     img = Image.open(img_path).convert('RGB')
-    orig_w, orig_h = img.size
     resized = img.resize((640, 640))
     arr = np.array(resized, dtype=np.float32) / 255.0
     arr = np.expand_dims(arr, axis=0) # [1, 640, 640, 3]
@@ -138,25 +130,32 @@ def verify(tflite_path="ml/yolov8_braille/yolov8_braille.tflite", img_path="Ange
         current_line.sort(key=lambda x: x['cx'])
         lines.append(current_line)
 
-    braille_map = load_braille_map()
-
     full_text = []
     for line in lines:
         line_chars = []
         last_x = -1
         for d in line:
             if last_x > 0 and (d['cx'] - last_x) > (median_w * 1.6):
-                line_chars.append(' ')
+                if line_chars and line_chars[-1] != ' ':
+                    line_chars.append(' ')
             last_x = d['cx']
 
             bin_str = f"{d['class']:06b}"
-            char = braille_map.get(bin_str, '?')
-            line_chars.append(char)
-        full_text.append("".join(line_chars))
+            d1, d2, d3, d4, d5, d6 = [int(ch) for ch in bin_str]
+            mask = d1 | (d2 << 1) | (d3 << 2) | (d4 << 3) | (d5 << 4) | (d6 << 5)
+            if mask == 0:
+                if line_chars and line_chars[-1] != ' ':
+                    line_chars.append(' ')
+            else:
+                line_chars.append(chr(0x2800 + mask))
+        raw_u = "".join(line_chars).strip()
+        if raw_u:
+            eng = louis.backTranslateString(['en-ueb-g2.ctb'], raw_u)
+            full_text.append(eng)
 
     result_text = "\n".join(full_text)
     print("\n" + "="*50)
-    print("RECOGNIZED TEXT FROM YOLO:")
+    print("RECOGNIZED TEXT FROM YOLO (LIBLOUIS BACK-TRANSLATION):")
     print("="*50)
     print(result_text[:400])
     print("="*50)

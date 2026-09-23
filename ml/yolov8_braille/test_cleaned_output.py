@@ -1,75 +1,20 @@
+import sys
+import os
+import io
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+from ml.braille_ocr import louis
+
 import numpy as np
 from PIL import Image
 import tensorflow as tf
 import re
-
-def get_complete_braille_map():
-    return {
-        '000000': ' ',
-        '000001': ',',
-        '000010': '',
-        '000011': ';',
-        '000100': '',
-        '000101': '/',
-        '000110': '',
-        '000111': '?',
-        '001000': '\'',
-        '001001': '-',
-        '001010': '*',
-        '001011': '.',
-        '001100': '"',
-        '001101': '_',
-        '001110': '',
-        '001111': '#',
-        '010000': ';',
-        '010001': ',',
-        '010010': ':',
-        '010011': '.',
-        '010100': 'i',
-        '010101': 'en',
-        '010110': 'j',
-        '010111': 'w',
-        '011000': ';',
-        '011001': '?',
-        '011010': '!',
-        '011011': '(',
-        '011100': 's',
-        '011101': 'the',
-        '011110': 't',
-        '011111': 'with',
-        '100000': 'a',
-        '100001': 'ch',
-        '100010': 'e',
-        '100011': 'sh',
-        '100100': 'c',
-        '100101': 'wh',
-        '100110': 'd',
-        '100111': 'th',
-        '101000': 'k',
-        '101001': 'u',
-        '101010': 'o',
-        '101011': 'z',
-        '101100': 'm',
-        '101101': 'x',
-        '101110': 'n',
-        '101111': 'y',
-        '110000': 'b',
-        '110001': 'gh',
-        '110010': 'h',
-        '110011': 'ou',
-        '110100': 'f',
-        '110101': 'ed',
-        '110110': 'g',
-        '110111': 'er',
-        '111000': 'l',
-        '111001': 'v',
-        '111010': 'r',
-        '111011': 'for',
-        '111100': 'p',
-        '111101': 'and',
-        '111110': 'q',
-        '111111': 'of'
-    }
 
 def nms(boxes, scores, iou_threshold=0.40):
     if len(boxes) == 0:
@@ -165,41 +110,63 @@ def run_cleaned():
         curr.sort(key=lambda x: x['cx'])
         lines.append(curr)
 
-    bmap = get_complete_braille_map()
-    clean_lines = []
+    unicode_lines = []
+    translated_lines = []
 
     for l in lines:
         chars = []
         last_x2 = -1.0
         for d in l:
-            # Edge-to-edge gap threshold:
-            # Only insert space if distance from previous box's right edge to this box's left edge is > 0.8 * character width
+            # Space threshold: insert space if gap > 0.8 * character width
             if last_x2 > 0 and (d['x1'] - last_x2) > (med_w * 0.80):
-                chars.append(' ')
+                if chars and chars[-1] != ' ':
+                    chars.append(' ')
             last_x2 = d['x2']
 
             bin_str = f"{d['cls']:06b}"
-            raw = bmap.get(bin_str, '')
-            chars.append(raw)
+            d1 = int(bin_str[0])
+            d2 = int(bin_str[1])
+            d3 = int(bin_str[2])
+            d4 = int(bin_str[3])
+            d5 = int(bin_str[4])
+            d6 = int(bin_str[5])
 
-        raw_line = "".join(chars)
+            # 1. Cell-to-Unicode Mapping:
+            # 0x2800 + (d1 | (d2 << 1) | (d3 << 2) | (d4 << 3) | (d5 << 4) | (d6 << 5))
+            # Empty cells (where sum of dots == 0) mapped strictly to a literal space ' '
+            mask = d1 | (d2 << 1) | (d3 << 2) | (d4 << 3) | (d5 << 4) | (d6 << 5)
+            if mask == 0:
+                if chars and chars[-1] != ' ':
+                    chars.append(' ')
+            else:
+                chars.append(chr(0x2800 + mask))
 
-        # Post-processing filters:
-        # 1. Remove isolated punctuation standing alone between spaces: e.g. " ; ", " ' ", " - "
-        cleaned = re.sub(r'(?<=\s)[;\',\-\*\.\:\?\!/](?=\s|$)', '', raw_line)
-        cleaned = re.sub(r'^[;\',\-\*\.\:\?\!/]\s+', '', cleaned)
-        cleaned = re.sub(r'\s+[;\',\-\*\.\:\?\!/]$', '', cleaned)
-        # 2. Collapse multiple spaces
-        cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
+        unicode_line_str = "".join(chars).strip()
+        if not unicode_line_str:
+            continue
 
-        if cleaned:
-            clean_lines.append(cleaned)
+        # 2. One-Pass Back-Translation:
+        # Pass that string directly into:
+        #     louis.backTranslateString(['en-ueb-g2.ctb'], unicode_line_str)
+        # Do NOT run any intermediate character substitutions or lookup dictionaries before or after this call.
+        english_line = louis.backTranslateString(['en-ueb-g2.ctb'], unicode_line_str)
+        unicode_lines.append(unicode_line_str)
+        translated_lines.append(english_line)
 
-    print("\n" + "="*60)
-    print("CLEANED & FILTERED TEXT:")
-    print("="*60)
-    print("\n".join(clean_lines))
-    print("="*60)
+    print("\n" + "=" * 80)
+    print("RAW UNICODE BRAILLE AND ONE-PASS LIBLOUIS TRANSLATED ENGLISH:")
+    print("=" * 80)
+    for i, (u_str, eng) in enumerate(zip(unicode_lines, translated_lines)):
+        print(f"Line {i:02d} | Braille: {u_str} | English: {eng}")
+
+    print("\n" + "=" * 80)
+    print("VERIFICATION OF TARGET LINES (LINE 7 & LINE 15):")
+    print("=" * 80)
+    if len(unicode_lines) > 7:
+        print(f"Line  7 | Braille: {unicode_lines[7]} | English: {translated_lines[7]}")
+    if len(unicode_lines) > 15:
+        print(f"Line 15 | Braille: {unicode_lines[15]} | English: {translated_lines[15]}")
+    print("=" * 80)
 
 if __name__ == '__main__':
     run_cleaned()
