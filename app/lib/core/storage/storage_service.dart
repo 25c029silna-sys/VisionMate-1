@@ -49,6 +49,12 @@ class StorageService {
     return db.query('documents', orderBy: 'created_at DESC');
   }
 
+  Future<int> deleteDocument(int id) async {
+    final db = await database;
+    await db.delete('embeddings', where: 'document_id = ?', whereArgs: [id]);
+    return await db.delete('documents', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<void> setSetting(String key, String value) async {
     final db = await database;
     await db.insert(

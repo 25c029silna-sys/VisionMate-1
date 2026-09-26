@@ -7,7 +7,58 @@ import '../../../core/pdf/pdf_service.dart';
 import '../../../core/tflite/tflite_helper.dart';
 import '../data/braille_preprocessor.dart';
 import 'braille_text_refiner.dart';
+import 'page_border_detector.dart';
+import 'printed_braille_detector.dart';
 import 'yolo_braille_decoder.dart';
+
+/// Selectable Braille recognition pipeline mode.
+enum BrailleRecognitionMode {
+  /// Active default: Pure-Dart computer vision engine optimized for non-embossed
+  /// (printed, flat, digital, or packaging) Braille text.
+  printed,
+
+  /// Preserved for future expansion: Deep-learning YOLOv8 engine trained on
+  /// physical embossed paper pages (shadow-dipole detection).
+  embossed,
+}
+
+/// Comprehensive scan result containing recognized Braille text, detected paper border,
+/// and rendered demonstration image buffers for live border recognition demonstration.
+class BrailleScanResult {
+  final String text;
+  final PageBorder pageBorder;
+  final bool isBorderDetected;
+  final Uint8List? annotatedImageBytes; // Image with vibrant neon green border & cyan corner brackets
+  final Uint8List? croppedImageBytes;   // Rectified paper image strictly containing content inside border
+  final Uint8List? originalImageBytes;  // Raw input image bytes
+  final int originalWidth;
+  final int originalHeight;
+  final int croppedWidth;
+  final int croppedHeight;
+  final Duration elapsed;
+  final String? debugStatus;
+
+  BrailleScanResult({
+    required this.text,
+    required this.pageBorder,
+    required this.isBorderDetected,
+    this.annotatedImageBytes,
+    this.croppedImageBytes,
+    this.originalImageBytes,
+    required this.originalWidth,
+    required this.originalHeight,
+    required this.croppedWidth,
+    required this.croppedHeight,
+    required this.elapsed,
+    this.debugStatus,
+  });
+
+  bool get hasContent => text.trim().isNotEmpty && !text.contains('No Braille text detected');
+  double get clutterReductionRatio =>
+      (originalWidth > 0 && originalHeight > 0)
+          ? max(0.0, 1.0 - ((croppedWidth * croppedHeight) / (originalWidth * originalHeight)))
+          : 0.0;
+}
 
 class LetterboxResult {
   final img.Image image;
@@ -30,6 +81,9 @@ class BrailleService {
   bool _isModelAvailable = false;
   bool _isYoloModel = false;
   List<String> _labels = [];
+
+  /// Current recognition pipeline mode. Defaults to non-embossed printed Braille.
+  BrailleRecognitionMode recognitionMode = BrailleRecognitionMode.printed;
 
   bool get isModelAvailable => _isModelAvailable;
   bool get isYoloModel => _isYoloModel;
@@ -79,57 +133,221 @@ class BrailleService {
     _labels = List.from(defaultBrailleDictionary);
   }
 
-  /// Classifies a photographed Braille page into structured digital text.
-  /// Uses TFLite CNN inference when available, or heuristic cell grid processing as fallback.
-  Future<String> classifyBraille(String imagePath) async {
-    final hasModel = await checkModelAvailability();
-
+  /// Classifies a photographed Braille page with automatic paper border detection and cropping.
+  /// 
+  /// 1. Identifies the edges and 4-corner boundary of the paper document using [PageBorderDetector].
+  /// 2. Crops and rectifies the page so ONLY the content inside the cropped border is passed
+  ///    to the Braille recognition engine.
+  /// 3. Returns detailed [BrailleScanResult] with recognized text, detected border coordinates,
+  ///    and visual demonstration image buffers for live demonstration.
+  Future<BrailleScanResult> scanBrailleWithBorderCrop(
+    String imagePath, {
+    bool enableBorderCrop = true,
+  }) async {
+    final stopwatch = Stopwatch()..start();
     try {
-      debugPrint('Classifying Braille page image at $imagePath (TFLite Model Active: $hasModel)...');
+      debugPrint('Scanning Braille image with border crop at $imagePath (Mode: ${recognitionMode.name})...');
       final file = File(imagePath);
       if (!file.existsSync()) {
         debugPrint('Image file at $imagePath does not exist.');
-        return hasModel ? 'No image captured. Please try again.' : 'MODEL_UNAVAILABLE';
+        return BrailleScanResult(
+          text: 'No image captured. Please try again.',
+          pageBorder: PageBorderDetector.createFallbackBorder(100, 100),
+          isBorderDetected: false,
+          originalWidth: 0,
+          originalHeight: 0,
+          croppedWidth: 0,
+          croppedHeight: 0,
+          elapsed: stopwatch.elapsed,
+          debugStatus: 'File not found',
+        );
       }
 
       final bytes = await file.readAsBytes();
       final rawImage = img.decodeImage(bytes);
       if (rawImage == null) {
         debugPrint('Failed to decode image at $imagePath.');
-        return 'Could not decode image format.';
+        return BrailleScanResult(
+          text: 'Could not decode image format.',
+          pageBorder: PageBorderDetector.createFallbackBorder(100, 100),
+          isBorderDetected: false,
+          originalWidth: 0,
+          originalHeight: 0,
+          croppedWidth: 0,
+          croppedHeight: 0,
+          elapsed: stopwatch.elapsed,
+          debugStatus: 'Decode error',
+        );
       }
+
       // Auto-orient based on smartphone camera EXIF metadata (fixes 90-deg rotated photos)
       final image = img.bakeOrientation(rawImage);
-
-      if (hasModel && _tfliteHelper.interpreter != null) {
-        if (_isYoloModel) {
-          final recognizedText = await _processImageAndRunYoloInference(image);
-          final refinedText = BrailleTextRefiner.refineOffline(recognizedText);
-          final cleanedText = refinedText.replaceAll('?', '').replaceAll(' ', '').trim();
-          return cleanedText.isNotEmpty ? refinedText : 'No Braille text detected. Please align camera over a Braille page.';
-        }
-
-        final List<int> detectedCellIndices = await _processImageAndRunInference(image);
-        if (detectedCellIndices.isEmpty) {
-          return 'No Braille text detected. Please align camera over a Braille page.';
-        }
-        final recognizedText = assembleBrailleText(detectedCellIndices);
-        final cleanedText = recognizedText.replaceAll('?', '').replaceAll(' ', '').trim();
-        return cleanedText.isNotEmpty ? recognizedText : 'No Braille text detected. Please align camera over a Braille page.';
-      } else {
-        // Fallback: Pure Dart cell grid & 6-dot heuristic analysis
-        final cells = _preprocessor.extractCellData(image);
-        if (cells.isEmpty || cells.every((c) => c.isEmpty)) {
-          return 'No Braille text detected. Please align camera over a Braille page.';
-        }
-        final recognizedText = assembleBrailleFromCells(cells);
-        final cleanedText = recognizedText.replaceAll('?', '').replaceAll(' ', '').trim();
-        return cleanedText.isNotEmpty ? recognizedText : 'No Braille text detected. Please align camera over a Braille page.';
-      }
+      return await scanBrailleFromImage(
+        image,
+        enableBorderCrop: enableBorderCrop,
+        rawBytes: bytes,
+        stopwatch: stopwatch,
+      );
     } catch (e, stack) {
       debugPrint('Braille classification error: $e\n$stack');
-      return 'Error during Braille processing: $e';
+      return BrailleScanResult(
+        text: 'Error during Braille processing: $e',
+        pageBorder: PageBorderDetector.createFallbackBorder(100, 100),
+        isBorderDetected: false,
+        originalWidth: 0,
+        originalHeight: 0,
+        croppedWidth: 0,
+        croppedHeight: 0,
+        elapsed: stopwatch.elapsed,
+        debugStatus: 'Error: $e',
+      );
     }
+  }
+
+  /// Processes an [img.Image] directly with paper border recognition, cropping, and Braille decoding.
+  Future<BrailleScanResult> scanBrailleFromImage(
+    img.Image image, {
+    bool enableBorderCrop = true,
+    PageBorder? borderOverride,
+    Uint8List? rawBytes,
+    Stopwatch? stopwatch,
+    String? debugStatus,
+  }) async {
+    final timer = stopwatch ?? (Stopwatch()..start());
+    final origW = image.width;
+    final origH = image.height;
+
+    // 1. Identify paper edges and 4-corner boundary
+    final PageBorder detectedBorder = borderOverride ?? PageBorderDetector.detectPageBorder(image);
+    debugPrint('Detected page border: $detectedBorder (Confidence: ${detectedBorder.confidence}, Detected: ${detectedBorder.isDetected})');
+
+    // 2. Crop to detected border so ONLY content inside the border is passed to Braille recognition
+    final img.Image croppedImage = enableBorderCrop
+        ? PageBorderDetector.cropAndRectifyPage(image, detectedBorder, marginRatio: 0.0)
+        : image;
+
+    // 3. Render visual demonstration overlay with neon green border and cyan corner brackets
+    final img.Image overlayImage = PageBorderDetector.addCropBorderOverlay(image, detectedBorder);
+
+    // Encode demonstration images for live UI display
+    Uint8List? annotatedBytes;
+    Uint8List? croppedBytes;
+    Uint8List? origBytes = rawBytes;
+    try {
+      annotatedBytes = Uint8List.fromList(img.encodePng(overlayImage));
+      croppedBytes = Uint8List.fromList(img.encodePng(croppedImage));
+      origBytes ??= Uint8List.fromList(img.encodePng(image));
+    } catch (e) {
+      debugPrint('Demo image encoding note: $e');
+    }
+
+    String recognizedText = '';
+
+    // --- ACTIVE PIPELINE: Dual Auto-Adaptive Braille Engine ---
+    if (recognitionMode == BrailleRecognitionMode.printed) {
+      // ONLY content inside cropped border is passed for Braille recognition!
+      // Passes isAlreadyCropped: true to preserve edge dots and autoOrient: true for rotation resilience
+      final rawDecoded = PrintedBrailleDetector.detectAndDecode(
+        croppedImage,
+        isAlreadyCropped: enableBorderCrop || borderOverride != null,
+        autoOrient: true,
+      );
+      if (rawDecoded.trim().isNotEmpty) {
+        final refined = BrailleTextRefiner.refineOffline(rawDecoded);
+        final cleaned = refined.replaceAll('?', '').replaceAll(' ', '').trim();
+        recognizedText = cleaned.isNotEmpty ? refined : '';
+      }
+
+      // Seamless fallback: If the page is an embossed tactile Braille document
+      // (where printed detection produces no text or excessive '?'), attempt YOLOv8 detection
+      if (recognizedText.isEmpty || recognizedText.contains('?')) {
+        final hasModel = await checkModelAvailability();
+        if (hasModel && _isYoloModel && _tfliteHelper.interpreter != null) {
+          try {
+            final yoloDecoded = await _processImageAndRunYoloInference(croppedImage);
+            if (yoloDecoded.trim().isNotEmpty) {
+              final refinedYolo = BrailleTextRefiner.refineOffline(yoloDecoded);
+              final cleanedYolo = refinedYolo.replaceAll('?', '').replaceAll(' ', '').trim();
+              if (cleanedYolo.isNotEmpty && (recognizedText.isEmpty || cleanedYolo.length > recognizedText.length)) {
+                recognizedText = refinedYolo;
+                debugPrint('BrailleService: Auto-switched to embossed YOLOv8 pipeline for higher-accuracy detection.');
+              }
+            }
+          } catch (e) {
+            debugPrint('BrailleService: YOLO fallback note: $e');
+          }
+        }
+      }
+
+      if (recognizedText.isEmpty) {
+        recognizedText = 'No Braille text detected. Please align camera over a Braille page.';
+      }
+    } else {
+      // --- PRESERVED PIPELINE: Embossed (Tactile Paper) Braille ---
+      final hasModel = await checkModelAvailability();
+      if (hasModel && _tfliteHelper.interpreter != null) {
+        if (_isYoloModel) {
+          final rawDecoded = await _processImageAndRunYoloInference(croppedImage);
+          final refined = BrailleTextRefiner.refineOffline(rawDecoded);
+          final cleaned = refined.replaceAll('?', '').replaceAll(' ', '').trim();
+          recognizedText = cleaned.isNotEmpty ? refined : 'No Braille text detected. Please align camera over a Braille page.';
+        } else {
+          final List<int> detectedCellIndices = await _processImageAndRunInference(croppedImage);
+          if (detectedCellIndices.isNotEmpty) {
+            recognizedText = assembleBrailleText(detectedCellIndices);
+            final cleaned = recognizedText.replaceAll('?', '').replaceAll(' ', '').trim();
+            if (cleaned.isEmpty) {
+              recognizedText = 'No Braille text detected. Please align camera over a Braille page.';
+            }
+          } else {
+            recognizedText = 'No Braille text detected. Please align camera over a Braille page.';
+          }
+        }
+      } else {
+        final cells = _preprocessor.extractCellData(croppedImage);
+        if (cells.isNotEmpty && !cells.every((c) => c.isEmpty)) {
+          recognizedText = assembleBrailleFromCells(cells);
+          final cleaned = recognizedText.replaceAll('?', '').replaceAll(' ', '').trim();
+          if (cleaned.isEmpty) {
+            recognizedText = 'No Braille text detected. Please align camera over a Braille page.';
+          }
+        } else {
+          recognizedText = 'No Braille text detected. Please align camera over a Braille page.';
+        }
+      }
+    }
+
+    timer.stop();
+    return BrailleScanResult(
+      text: recognizedText,
+      pageBorder: detectedBorder,
+      isBorderDetected: detectedBorder.isDetected,
+      annotatedImageBytes: annotatedBytes,
+      croppedImageBytes: croppedBytes,
+      originalImageBytes: origBytes,
+      originalWidth: origW,
+      originalHeight: origH,
+      croppedWidth: croppedImage.width,
+      croppedHeight: croppedImage.height,
+      elapsed: timer.elapsed,
+      debugStatus: debugStatus ?? 'Completed in ${timer.elapsedMilliseconds}ms',
+    );
+  }
+
+  /// Runs an instant live demonstration of the border recognition and crop feature using a
+  /// synthesized document page placed on a darker desk.
+  Future<BrailleScanResult> runDemoWithSampleSheet({String text = 'braille recognition'}) async {
+    final sampleImage = PageBorderDetector.generateDemoBrailleSheet(brailleText: text);
+    return await scanBrailleFromImage(sampleImage, enableBorderCrop: true);
+  }
+
+  /// Classifies a photographed Braille page into structured digital text.
+  /// 
+  /// Applies automatic paper border detection and cropping so ONLY the content inside
+  /// the cropped border is passed for Braille recognition.
+  Future<String> classifyBraille(String imagePath) async {
+    final scanResult = await scanBrailleWithBorderCrop(imagePath, enableBorderCrop: true);
+    return scanResult.text;
   }
 
   /// Map 6-element boolean dot list [d1, d2, d3, d4, d5, d6] to Braille character
@@ -208,6 +426,92 @@ class BrailleService {
   /// Exports recognized Braille text to a PDF file saved in device storage.
   Future<File> exportBrailleTextToPdf(String textContent, {String title = 'Recognized_Braille_Document'}) async {
     return await pdfService.generatePdfFromText(title: title, textContent: textContent);
+  }
+
+  /// Cleans and sanitizes a raw spoken document name for use as a PDF title and filename.
+  /// Strips conversational carrier prefixes (e.g. "save as", "call it"), illegal characters,
+  /// and formats words to Title Case.
+  static String cleanPdfName(String raw) {
+    var cleaned = raw.trim();
+    if (cleaned.isEmpty) return '';
+
+    // Strip common conversational carrier prefixes
+    final prefixPatterns = [
+      RegExp(r'^(?:please\s+)?(?:save\s+as|save\s+pdf\s+as|save\s+it\s+as|save\s+pdf\s+named|save\s+document\s+as|save\s+document\s+named|export\s+as|export\s+pdf\s+as|export\s+pdf\s+named|export\s+document\s+as|export\s+pdf|save\s+pdf|name\s+it|call\s+it|titled|title|named|as)(?:$|\s+)', caseSensitive: false),
+      RegExp(r'^(?:i\s+want\s+to\s+call\s+it|call\s+this|save\s+with\s+name|with\s+name)(?:$|\s+)', caseSensitive: false),
+    ];
+    for (final p in prefixPatterns) {
+      cleaned = cleaned.replaceFirst(p, '').trim();
+    }
+
+    // Strip trailing conversational carriers or punctuation commonly captured by STT engines
+    cleaned = cleaned.replaceAll(RegExp(r'[\.\,\!\?]+$'), '').trim();
+    // Remove invalid filesystem filename characters: \ / : * ? " < > |
+    cleaned = cleaned.replaceAll(RegExp(r'[\\/:*?"<>|]'), '');
+    // Collapse internal whitespace
+    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    if (cleaned.isEmpty) return '';
+
+    // Format into Title Case for clean presentation
+    final words = cleaned.split(' ');
+    final titleCased = words.map((w) {
+      if (w.isEmpty) return '';
+      return w[0].toUpperCase() + (w.length > 1 ? w.substring(1) : '');
+    }).join(' ');
+
+    return titleCased;
+  }
+
+  /// Extracts a custom PDF name from a voice command string if present.
+  /// Returns null if no custom name is specified (e.g. user just said "save pdf").
+  static String? extractPdfNameFromCommand(String command) {
+    final trimmed = command.trim();
+    if (trimmed.isEmpty) return null;
+
+    // Pattern 1: explicit indicator "as", "named", "called", "with name", "titled"
+    // e.g. "save pdf as biology notes", "export as chapter 1", "save named my document"
+    final explicitMatch = RegExp(
+      r'(?:save|export|create)\s+(?:the\s+)?(?:pdf|document|file)?\s*(?:as|named|called|with\s+name|titled)\s+(.+)',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+
+    if (explicitMatch != null && explicitMatch.group(1) != null) {
+      final candidate = cleanPdfName(explicitMatch.group(1)!);
+      if (candidate.isNotEmpty) return candidate;
+    }
+
+    // Pattern 2: "pdf as <name>" or "pdf named <name>"
+    final pdfAsMatch = RegExp(
+      r'(?:pdf|document)\s+(?:as|named|called|titled)\s+(.+)',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+
+    if (pdfAsMatch != null && pdfAsMatch.group(1) != null) {
+      final candidate = cleanPdfName(pdfAsMatch.group(1)!);
+      if (candidate.isNotEmpty) return candidate;
+    }
+
+    // Pattern 3: "save pdf <name>" or "export pdf <name>" where <name> is at least one word
+    // but not command modifiers like "now", "please", "file", "document"
+    final savePdfMatch = RegExp(
+      r'(?:save|export)\s+(?:the\s+)?(?:pdf|document)\s+(.+)',
+      caseSensitive: false,
+    ).firstMatch(trimmed);
+
+    if (savePdfMatch != null && savePdfMatch.group(1) != null) {
+      final candidate = cleanPdfName(savePdfMatch.group(1)!);
+      final lowerCandidate = candidate.toLowerCase();
+      if (lowerCandidate != 'now' &&
+          lowerCandidate != 'please' &&
+          lowerCandidate != 'file' &&
+          lowerCandidate != 'document' &&
+          candidate.isNotEmpty) {
+        return candidate;
+      }
+    }
+
+    return null;
   }
 
   /// Result of letterboxing with scaling factor and padding offsets

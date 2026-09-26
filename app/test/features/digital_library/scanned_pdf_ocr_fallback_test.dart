@@ -54,6 +54,14 @@ class _MockStorageService extends StorageService {
   Future<List<Map<String, dynamic>>> fetchDocuments() async {
     return List.from(store._docs);
   }
+
+  @override
+  Future<int> deleteDocument(int id) async {
+    store._embeddings.removeWhere((e) => e['document_id'] == id);
+    final count = store._docs.where((d) => d['id'] == id).length;
+    store._docs.removeWhere((d) => d['id'] == id);
+    return count;
+  }
 }
 
 void main() {

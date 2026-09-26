@@ -17,4 +17,9 @@ class EmbeddingStore {
     final db = await service.database;
     return db.query('embeddings', limit: limit);
   }
+
+  Future<int> deleteEmbedding(int documentId) async {
+    final db = await service.database;
+    return db.delete('embeddings', where: 'document_id = ?', whereArgs: [documentId]);
+  }
 }

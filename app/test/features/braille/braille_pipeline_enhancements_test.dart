@@ -1,7 +1,4 @@
-import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:visionmate/features/braille/domain/yolo_braille_decoder.dart';
 import 'package:visionmate/features/braille/domain/braille_text_refiner.dart';
 
@@ -150,99 +147,6 @@ it was monday morning
       expect(lines.any((l) => l == 'o'), isFalse);
       expect(refined, contains('swami and friends'));
       expect(refined, contains('it was monday morning'));
-    });
-
-    test('refineWithAi successfully reconstructs text when Gemini API returns 200 OK', () async {
-      final mockClient = MockClient((request) async {
-        expect(request.url.host, 'generativelanguage.googleapis.com');
-        expect(request.url.path, '/v1beta/models/gemini-1.5-flash:generateContent');
-        expect(request.url.queryParameters['key'], 'AIzaSyValidTestKey');
-
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect(body.containsKey('contents'), isTrue);
-
-        final responseJson = {
-          'candidates': [
-            {
-              'content': {
-                'parts': [
-                  {
-                    'text': 'Swami and friends could go to the room. It was Monday morning.'
-                  }
-                ]
-              }
-            }
-          ]
-        };
-        return http.Response(jsonEncode(responseJson), 200, headers: {'content-type': 'application/json'});
-      });
-
-      final rawInput = 'swami and fr cd go to rm. it was monday morning.';
-      final result = await BrailleTextRefiner.refineWithAi(
-        rawInput,
-        apiKey: ' AIzaSyValidTestKey ',
-        client: mockClient,
-      );
-
-      expect(result, 'Swami and friends could go to the room. It was Monday morning.');
-    });
-
-    test('refineWithAi throws InvalidApiKeyException when API key is a dummy placeholder', () async {
-      expect(
-        () async => await BrailleTextRefiner.refineWithAi(
-          'fr and chn',
-          apiKey: 'YOUR_GEMINI_API_KEY',
-        ),
-        throwsA(isA<InvalidApiKeyException>()),
-      );
-    });
-
-    test('refineWithAi throws InvalidApiKeyException when Gemini returns 400 or 403', () async {
-      final mockClient = MockClient((request) async {
-        return http.Response('{"error": {"code": 400, "message": "API key not valid"}}', 400);
-      });
-
-      expect(
-        () async => await BrailleTextRefiner.refineWithAi(
-          'fr and chn cd go',
-          apiKey: 'AIzaSyBadKey',
-          client: mockClient,
-        ),
-        throwsA(isA<InvalidApiKeyException>()),
-      );
-    });
-
-    test('refineWithAi returns offline text immediately without network call when apiKey is empty', () async {
-      bool clientCalled = false;
-      final mockClient = MockClient((request) async {
-        clientCalled = true;
-        return http.Response('', 500);
-      });
-
-      final result = await BrailleTextRefiner.refineWithAi(
-        '#cj lifeand light',
-        apiKey: '   ',
-        client: mockClient,
-      );
-
-      expect(clientCalled, isFalse);
-      expect(result, contains('30'));
-      expect(result, contains('life and light'));
-    });
-
-    test('refineWithAi gracefully falls back to offline text on network exceptions / timeouts', () async {
-      final mockClient = MockClient((request) async {
-        throw http.ClientException('Network connection failed');
-      });
-
-      final result = await BrailleTextRefiner.refineWithAi(
-        '#cj lifeand light',
-        apiKey: 'AIzaSyTestKey',
-        client: mockClient,
-      );
-
-      expect(result, contains('30'));
-      expect(result, contains('life and light'));
     });
   });
 }

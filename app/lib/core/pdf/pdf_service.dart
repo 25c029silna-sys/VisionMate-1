@@ -56,7 +56,12 @@ class PdfService {
       ),
     );
 
-    final outputDir = await getApplicationDocumentsDirectory();
+    Directory outputDir;
+    try {
+      outputDir = await getApplicationDocumentsDirectory();
+    } catch (_) {
+      outputDir = Directory.systemTemp;
+    }
     final file = File('${outputDir.path}/$documentTitle.pdf');
     await file.writeAsBytes(await pdf.save());
     debugPrint('PdfService: Successfully generated PDF at ${file.path}');

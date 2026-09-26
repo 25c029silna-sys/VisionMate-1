@@ -103,7 +103,7 @@ class YoloBrailleDecoder {
   /// Empty cell (sum == 0) maps strictly to a literal space ' '.
   static String binaryCodeToUnicode(String binaryCode) {
     if (binaryCode.isEmpty) return ' ';
-    int d1 = binaryCode.length > 0 && binaryCode[0] == '1' ? 1 : 0;
+    int d1 = binaryCode.isNotEmpty && binaryCode[0] == '1' ? 1 : 0;
     int d2 = binaryCode.length > 1 && binaryCode[1] == '1' ? 1 : 0;
     int d3 = binaryCode.length > 2 && binaryCode[2] == '1' ? 1 : 0;
     int d4 = binaryCode.length > 3 && binaryCode[3] == '1' ? 1 : 0;
@@ -326,21 +326,19 @@ class YoloBrailleDecoder {
 
     for (int l = 0; l < lines.length; l++) {
       final line = lines[l];
-      double lastX2 = -1.0;
       double lastCx = -1.0;
 
       for (final d in line) {
         // Dynamic Spacing Calibration:
         // Do NOT emit an empty space ' ' unless the horizontal gap between two consecutive 2x3 cells
-        // is strictly greater than 1.5 times the inter-cell pitch (cx).
+        // is strictly greater than 1.6 times the inter-cell pitch (cx).
         // Any gap smaller than this MUST be treated as contiguous characters within the same word.
         final double cx = medianW * 1.20;
-        final bool isSpace = lastCx > 0 && (d.cx - lastCx) > (1.5 * cx);
+        final bool isSpace = lastCx > 0 && (d.cx - lastCx) > (1.6 * cx);
         if (isSpace) {
           buffer.write(' ');
           isNumberMode = false;
         }
-        lastX2 = d.x2;
         lastCx = d.cx;
 
         final rawChar = brailleCharMap[d.binaryCode] ?? '?';

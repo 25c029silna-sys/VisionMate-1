@@ -29,6 +29,7 @@ dependencies:
   file_picker: ^12.1.0
   pdf: ^3.10.8
   syncfusion_flutter_pdf: ^34.2.5
+  google_mlkit_document_scanner: ^0.6.1
 
 dev_dependencies:
   flutter_test:
@@ -43,7 +44,8 @@ flutter:
   assets:
     # - assets/models/braille_cnn.tflite
     - assets/models/yolov8_braille.tflite
-    # - assets/models/yolov8n.tflite
+    - assets/models/yolov8n.tflite
+    - assets/models/detect.tflite
     # - assets/models/minilm.tflite
     - assets/labels/braille_labels.txt
     - assets/labels/yolo_labels.txt

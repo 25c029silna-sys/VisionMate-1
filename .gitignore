@@ -55,3 +55,6 @@ app/.dart_tool/
 app/build/
 app/.flutter-plugins
 app/.flutter-plugins-dependencies
+
+# Study documentation outputs
+study_documents/

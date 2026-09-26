@@ -1,0 +1,4 @@
+Line 0:
+    Cell 0: 100000
+    Cell 1: MISSING
+    Cell 2: 101000

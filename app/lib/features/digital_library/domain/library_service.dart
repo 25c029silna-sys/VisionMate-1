@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../../core/pdf/pdf_service.dart';
 import '../../../core/tflite/tflite_helper.dart';
 import '../../ocr_reader/domain/ocr_service.dart';
@@ -44,10 +45,12 @@ class LibraryService {
     magA = sqrt(magA);
     magB = sqrt(magB);
     if (magA == 0 || magB == 0) return 0.0;
-    return dot / (magA * magB);
+    final similarity = dot / (magA * magB);
+    return similarity.clamp(0.0, 1.0);
   }
 
   /// Indexes a new document by creating SQLite record and 384d vector embedding.
+  /// Emphasizes title tokens to ensure prominent title match retrieval.
   Future<int> addAndIndexDocument(String title, String text, {String sourceType = 'user_note'}) async {
     final docId = await embeddingStore.service.saveDocument({
       'title': title,
@@ -55,7 +58,7 @@ class LibraryService {
       'source_type': sourceType,
       'created_at': DateTime.now().toIso8601String(),
     });
-    final vector = embedder.generateEmbedding('$title $text');
+    final vector = embedder.generateEmbedding('$title $title $text');
     await embeddingStore.saveEmbedding(docId, vector);
     return docId;
   }
@@ -141,6 +144,49 @@ class LibraryService {
 
     // Return top-K matches post-scoring
     return scored.take(topK).toList();
+  }
+
+  /// Fetches all documents and PDF books currently stored in the digital library.
+  Future<List<Map<String, dynamic>>> fetchAvailableDocuments() async {
+    try {
+      return await embeddingStore.service.fetchDocuments();
+    } catch (e) {
+      debugPrint('LibraryService: Error fetching available documents: $e');
+      return [];
+    }
+  }
+
+  /// Deletes a document or book by its database ID, removing its vector embeddings
+  /// and any corresponding physical PDF file stored on disk.
+  Future<bool> deleteBook(int docId, {String? title}) async {
+    try {
+      // 1. Delete associated physical PDF file if present on disk
+      if (title != null && title.trim().isNotEmpty) {
+        try {
+          final sanitizedTitle = title.replaceAll(RegExp(r'[^\w\s\-]'), '_').trim();
+          final appDocDir = await getApplicationDocumentsDirectory();
+          final candidateFiles = [
+            File('${appDocDir.path}/$title.pdf'),
+            File('${appDocDir.path}/$sanitizedTitle.pdf'),
+          ];
+          for (final f in candidateFiles) {
+            if (await f.exists()) {
+              await f.delete();
+              debugPrint('LibraryService: Deleted physical PDF file at ${f.path}');
+            }
+          }
+        } catch (fileErr) {
+          debugPrint('LibraryService: Note deleting physical PDF file: $fileErr');
+        }
+      }
+
+      // 2. Delete database records (both embeddings and document)
+      final rowsDeleted = await embeddingStore.service.deleteDocument(docId);
+      return rowsDeleted > 0;
+    } catch (e) {
+      debugPrint('LibraryService: Error deleting document #$docId: $e');
+      return false;
+    }
   }
 }
 

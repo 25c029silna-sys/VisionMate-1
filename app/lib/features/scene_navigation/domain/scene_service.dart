@@ -167,7 +167,8 @@ class SceneService {
   ];
 
   Future<bool> checkModelAvailability() async {
-    final interpreter = await _tfliteHelper.loadModel('assets/models/yolov8n.tflite');
+    var interpreter = await _tfliteHelper.loadModel('assets/models/yolov8n.tflite');
+    interpreter ??= await _tfliteHelper.loadModel('assets/models/detect.tflite');
     _isModelAvailable = interpreter != null;
     await _loadLabels();
     return _isModelAvailable;

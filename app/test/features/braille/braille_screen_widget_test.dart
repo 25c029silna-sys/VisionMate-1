@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:provider/provider.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:visionmate/core/storage/storage_service.dart';
@@ -8,9 +10,13 @@ import 'package:visionmate/core/voice/voice_service.dart';
 import 'package:visionmate/core/camera/camera_service.dart';
 import 'package:visionmate/features/braille/presentation/braille_screen.dart';
 
+import 'package:visionmate/features/braille/domain/braille_service.dart';
+import 'package:visionmate/features/braille/domain/page_border_detector.dart';
+
 class MockVoiceService extends Mock implements VoiceService {}
 class MockCameraService extends Mock implements CameraService {}
 class MockStorageService extends Mock implements StorageService {}
+class MockBrailleService extends Mock implements BrailleService {}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -40,14 +46,21 @@ void main() {
       when(() => mockStorageService.setSetting(any(), any())).thenAnswer((_) async {});
     });
 
-    Widget createTestableWidget({CameraService? cameraService, StorageService? storageService}) {
+    Widget createTestableWidget({
+      CameraService? cameraService,
+      BrailleService? brailleService,
+      StorageService? storageService,
+    }) {
       return MultiProvider(
         providers: [
           ChangeNotifierProvider<VoiceService>.value(value: mockVoiceService),
           Provider<StorageService>.value(value: storageService ?? mockStorageService),
         ],
         child: MaterialApp(
-          home: BrailleScreen(cameraService: cameraService ?? mockCameraService),
+          home: BrailleScreen(
+            cameraService: cameraService ?? mockCameraService,
+            brailleService: brailleService,
+          ),
         ),
       );
     }
@@ -60,7 +73,10 @@ void main() {
       expect(find.text('Scan Braille'), findsOneWidget);
       expect(find.byIcon(Icons.camera_alt), findsOneWidget);
       expect(find.byIcon(Icons.flash_off), findsOneWidget);
-      expect(find.byIcon(Icons.vpn_key_rounded), findsOneWidget);
+      // Gemini API key and Demo buttons are removed
+      expect(find.byIcon(Icons.vpn_key_rounded), findsNothing);
+      expect(find.text('ML Kit'), findsNothing);
+      expect(find.text('Border Demo'), findsNothing);
     });
 
     testWidgets('Tapping flash button toggles flashlight and provides voice feedback', (tester) async {
@@ -105,26 +121,118 @@ void main() {
       expect(find.byTooltip('Restore Camera View'), findsOneWidget);
     });
 
-    testWidgets('Tapping Gemini API key button opens configuration dialog and saves key', (tester) async {
+    testWidgets('Does not render border crop HUD or demo buttons', (tester) async {
       await tester.pumpWidget(createTestableWidget());
       await tester.pump(const Duration(milliseconds: 100));
 
-      final keyBtn = find.byTooltip('Configure Gemini API Key');
-      expect(keyBtn, findsOneWidget);
+      expect(find.text('BORDER CROP: ON'), findsNothing);
+      expect(find.text('BORDER CROP: OFF'), findsNothing);
+      expect(find.text('ML Kit'), findsNothing);
+      expect(find.text('Border Demo'), findsNothing);
+    });
 
-      await tester.tap(keyBtn);
-      await tester.pump(const Duration(milliseconds: 200));
+    testWidgets('Voice command "save pdf as biology notes" warns when no text has been scanned', (tester) async {
+      when(() => mockVoiceService.listen()).thenAnswer((_) async => 'save pdf as biology notes');
+      await tester.pumpWidget(createTestableWidget());
+      await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('Gemini API Key'), findsOneWidget);
-      expect(find.byType(TextField), findsOneWidget);
+      verify(() => mockVoiceService.speak('No recognized Braille text available to export.')).called(1);
+    });
 
-      await tester.enterText(find.byType(TextField), 'AIzaSyTestMockKey123');
+    testWidgets('Starts voice capture instance after all recognized braille text is spoken by TTS', (tester) async {
+      final mockBrailleService = MockBrailleService();
+      when(() => mockCameraService.takePicture()).thenAnswer((_) async => XFile('mock/test.jpg'));
+      when(() => mockBrailleService.scanBrailleWithBorderCrop(any(), enableBorderCrop: any(named: 'enableBorderCrop')))
+          .thenAnswer((_) async => BrailleScanResult(
+            text: 'Recognized Braille Text Sample',
+            pageBorder: PageBorderDetector.createFallbackBorder(100, 100),
+            isBorderDetected: false,
+            originalWidth: 100,
+            originalHeight: 100,
+            croppedWidth: 100,
+            croppedHeight: 100,
+            elapsed: Duration.zero,
+          ));
+
+      await tester.pumpWidget(createTestableWidget(brailleService: mockBrailleService));
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.tap(find.text('Save'));
-      await tester.pump(const Duration(milliseconds: 200));
 
-      verify(() => mockStorageService.setSetting('gemini_api_key', 'AIzaSyTestMockKey123')).called(1);
-      verify(() => mockVoiceService.speak(any(that: contains('Gemini API key saved')))).called(1);
+      final scanButton = find.text('Scan Braille');
+      await tester.tap(scanButton);
+      await tester.pump(const Duration(milliseconds: 500));
+
+      verifyInOrder([
+        () => mockVoiceService.speak('Braille recognition complete. Recognized text: Recognized Braille Text Sample'),
+        () => mockVoiceService.listen(),
+      ]);
+    });
+
+    testWidgets('Returns to home page after saving a PDF via voice command', (tester) async {
+      final mockBrailleService = MockBrailleService();
+      when(() => mockCameraService.takePicture()).thenAnswer((_) async => XFile('mock/test.jpg'));
+      when(() => mockBrailleService.scanBrailleWithBorderCrop(any(), enableBorderCrop: any(named: 'enableBorderCrop')))
+          .thenAnswer((_) async => BrailleScanResult(
+            text: 'Biology Notes',
+            pageBorder: PageBorderDetector.createFallbackBorder(100, 100),
+            isBorderDetected: false,
+            originalWidth: 100,
+            originalHeight: 100,
+            croppedWidth: 100,
+            croppedHeight: 100,
+            elapsed: Duration.zero,
+          ));
+
+      final testPdf = File('${Directory.systemTemp.path}/test_biology_notes.pdf');
+      await testPdf.writeAsString('%PDF mock');
+      when(() => mockBrailleService.exportBrailleTextToPdf(any(), title: any(named: 'title')))
+          .thenAnswer((_) async => testPdf);
+
+      int listenCount = 0;
+      when(() => mockVoiceService.listen()).thenAnswer((_) async {
+        listenCount++;
+        if (listenCount >= 2) {
+          return 'save pdf as biology notes';
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<VoiceService>.value(value: mockVoiceService),
+            Provider<StorageService>.value(value: mockStorageService),
+          ],
+          child: MaterialApp(
+            initialRoute: '/',
+            routes: {
+              '/': (context) => const Scaffold(body: Text('Home Page Screen')),
+              '/braille': (context) => BrailleScreen(
+                cameraService: mockCameraService,
+                brailleService: mockBrailleService,
+              ),
+            },
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final navState = tester.state<NavigatorState>(find.byType(Navigator));
+      navState.pushNamed('/braille');
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Braille Page Recognition'), findsOneWidget);
+
+      final scanButton = find.text('Scan Braille');
+      await tester.tap(scanButton);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Home Page Screen'), findsOneWidget);
+      expect(find.text('Braille Page Recognition'), findsNothing);
+
+      if (await testPdf.exists()) {
+        await testPdf.delete();
+      }
     });
   });
 }

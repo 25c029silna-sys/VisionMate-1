@@ -1,0 +1,8 @@
+=== RAW BRAILLE DECODE ===
+⠉⠁⠃
+
+=== RAW DECODED TEXT ===
+cab
+
+=== CORRECTED TEXT ===
+cab

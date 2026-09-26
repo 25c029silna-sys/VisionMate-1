@@ -9,11 +9,12 @@ import '../../../widgets/voice_button.dart';
 import '../../digital_library/data/embedding_store.dart';
 import '../../digital_library/domain/library_service.dart';
 import '../domain/braille_service.dart';
-import '../domain/braille_text_refiner.dart';
+import 'widgets/voice_pdf_naming_dialog.dart';
 
 class BrailleScreen extends StatefulWidget {
   final CameraService? cameraService;
-  const BrailleScreen({super.key, this.cameraService});
+  final BrailleService? brailleService;
+  const BrailleScreen({super.key, this.cameraService, this.brailleService});
 
   @override
   State<BrailleScreen> createState() => _BrailleScreenState();
@@ -21,7 +22,7 @@ class BrailleScreen extends StatefulWidget {
 
 class _BrailleScreenState extends State<BrailleScreen> {
   late VoiceService voiceService;
-  final BrailleService brailleService = BrailleService();
+  late final BrailleService brailleService;
   late final CameraService cameraService;
   
   String result = 'Position camera over Braille page and tap Scan Braille or say Scan.';
@@ -30,7 +31,6 @@ class _BrailleScreenState extends State<BrailleScreen> {
   bool isFlashOn = false;
   bool isMaximizedCamera = false;
   bool isExportingPdf = false;
-  bool isEnhancing = false;
   bool isListening = false;
   Timer? _retryTimer;
 
@@ -39,6 +39,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
     super.initState();
     voiceService = Provider.of<VoiceService>(context, listen: false);
     cameraService = widget.cameraService ?? CameraService();
+    brailleService = widget.brailleService ?? BrailleService();
     _initCamera();
   }
 
@@ -113,12 +114,13 @@ class _BrailleScreenState extends State<BrailleScreen> {
       _toggleMaximizeCamera();
     } else if (lower.contains('minimize') || lower.contains('shrink') || lower.contains('restore') || lower.contains('normal')) {
       if (isMaximizedCamera) _toggleMaximizeCamera();
-    } else if (lower.contains('enhance') || lower.contains('polish') || lower.contains('fix') || lower.contains('correct')) {
-      await _enhanceText();
-    } else if (lower.contains('api') || lower.contains('key')) {
-      await _showApiKeyDialog();
     } else if (lower.contains('pdf') || lower.contains('export') || lower.contains('save')) {
-      await _exportToPdf();
+      final customName = BrailleService.extractPdfNameFromCommand(command);
+      if (customName != null && customName.isNotEmpty) {
+        await _exportToPdf(customName: customName);
+      } else {
+        await _promptAndExportPdf();
+      }
     } else if (lower.contains('repeat') || lower.contains('again')) {
       if (result.isNotEmpty) {
         await voiceService.speak('Current Braille text: $result');
@@ -127,9 +129,9 @@ class _BrailleScreenState extends State<BrailleScreen> {
       await voiceService.speak('Returning to main menu.');
       if (mounted) Navigator.pop(context);
     } else if (lower.contains('help') || lower.contains('guide')) {
-      await voiceService.speak('Available commands: say Scan to read Braille, Flash to toggle flashlight, Expand to enlarge camera area, Enhance to restore text, Key to configure API key, PDF to export document, Repeat to hear again, or Back to return home.');
+      await voiceService.speak('Available commands: say Scan to read Braille, Flash to toggle flashlight, Expand to enlarge camera area, Save PDF as with your chosen document name, Repeat to hear again, or Back to return home.');
     } else {
-      await voiceService.speak('Command not recognized. Say Scan, Flash, Expand, Enhance, Key, PDF, or Back.');
+      await voiceService.speak('Command not recognized. Say Scan, Flash, Expand, Save PDF, or Back.');
       if (mounted) {
         setState(() {
           result = 'Tap microphone button to speak a command.';
@@ -138,143 +140,16 @@ class _BrailleScreenState extends State<BrailleScreen> {
     }
   }
 
-  Future<String?> _getGeminiApiKey() async {
-    // 1. Check SQLite storage first (user-entered key takes precedence)
-    try {
-      final storage = Provider.of<StorageService>(context, listen: false);
-      final key = await storage.getSetting('gemini_api_key');
-      if (key != null && key.trim().isNotEmpty && !key.toUpperCase().contains('YOUR_GEMINI_API_KEY')) {
-        return key.trim();
-      }
-    } catch (e) {
-      debugPrint('BrailleScreen: Key lookup note: $e');
-    }
-
-    // 2. Check environment variable, but ignore dummy placeholders
-    const envKey = String.fromEnvironment('GEMINI_API_KEY');
-    if (envKey.isNotEmpty && !envKey.toUpperCase().contains('YOUR_GEMINI_API_KEY')) {
-      return envKey.trim();
-    }
-
-    return null;
-  }
-
-  Future<void> _showApiKeyDialog() async {
-    final currentKey = await _getGeminiApiKey() ?? '';
-    final controller = TextEditingController(text: currentKey);
-
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.vpn_key_rounded, color: Colors.amberAccent),
-            SizedBox(width: 8),
-            Text('Gemini API Key'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Enter your Google Gemini API key to enable AI text enhancement and restoration for degraded Braille pages.',
-              style: TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                labelText: 'Google Gemini API Key',
-                hintText: 'AIzaSy...',
-                border: OutlineInputBorder(),
-              ),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final newKey = controller.text.trim();
-              try {
-                final storage = Provider.of<StorageService>(context, listen: false);
-                await storage.setSetting('gemini_api_key', newKey);
-              } catch (_) {}
-              if (ctx.mounted) Navigator.pop(ctx);
-              voiceService.speak(newKey.isNotEmpty
-                  ? 'Gemini API key saved. You can now use AI text enhancement.'
-                  : 'API key cleared.');
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _enhanceText() async {
-    if (result.trim().isEmpty || result.contains('Position camera') || result.contains('Processing')) {
-      await voiceService.speak('No recognized Braille text available to enhance.');
-      return;
-    }
-
-    final apiKey = await _getGeminiApiKey();
-    if (apiKey == null || apiKey.isEmpty) {
-      await voiceService.speak('To enhance Braille text with AI, please configure your Gemini API key.');
-      if (mounted) {
-        await _showApiKeyDialog();
-      }
-      return;
-    }
-
-    setState(() {
-      isEnhancing = true;
-    });
-    await voiceService.speak('Refining Braille text with language model...');
-
-    try {
-      final enhanced = await BrailleTextRefiner.refineWithAi(result, apiKey: apiKey);
-      if (!mounted) return;
-
-      setState(() {
-        result = enhanced;
-        isEnhancing = false;
-      });
-
-      await voiceService.speak('Text enhanced: $enhanced');
-    } on InvalidApiKeyException {
-      if (!mounted) return;
-      setState(() {
-        isEnhancing = false;
-      });
-      await voiceService.speak('The Gemini API key is invalid or not configured. Please enter a valid key from Google AI Studio.');
-      await _showApiKeyDialog();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        isEnhancing = false;
-      });
-      await voiceService.speak('Could not complete text enhancement.');
-    }
-  }
-
-
   Future<void> _scanBraille() async {
     if (isScanning) return;
 
     setState(() {
       isScanning = true;
-      result = 'Processing Braille page image...';
+      result = 'Scanning Braille page...';
     });
 
     try {
-      await voiceService.speak('Scanning Braille page. Please hold the camera steady.');
+      await voiceService.speak('Scanning Braille page.');
 
       String? imagePath;
       if (cameraService.isInitialized) {
@@ -295,9 +170,14 @@ class _BrailleScreenState extends State<BrailleScreen> {
         return;
       }
 
-      final extracted = await brailleService.classifyBraille(imagePath);
+      final scanResult = await brailleService.scanBrailleWithBorderCrop(
+        imagePath,
+        enableBorderCrop: false,
+      );
 
       if (!mounted) return;
+
+      final extracted = scanResult.text;
 
       if (extracted == 'MODEL_UNAVAILABLE') {
         const errorMsg = "The trained Braille model file is currently unavailable. Operating in standard cell detection mode.";
@@ -318,6 +198,9 @@ class _BrailleScreenState extends State<BrailleScreen> {
       });
 
       await voiceService.speak('Braille recognition complete. Recognized text: $extracted');
+      if (mounted) {
+        await _handleVoiceCommand();
+      }
     } catch (e, stack) {
       debugPrint('BrailleScreen scanning error: $e\n$stack');
       if (!mounted) return;
@@ -330,8 +213,32 @@ class _BrailleScreenState extends State<BrailleScreen> {
     }
   }
 
-  Future<void> _exportToPdf() async {
-    if (result.trim().isEmpty || result.contains('Position camera') || result.contains('Processing')) {
+  Future<void> _promptAndExportPdf() async {
+    if (result.trim().isEmpty ||
+        result.contains('Position camera') ||
+        result.contains('Processing') ||
+        result.contains('isn\'t available') ||
+        result.contains('No Braille text detected')) {
+      await voiceService.speak('No recognized Braille text available to export.');
+      return;
+    }
+
+    final chosenName = await VoicePdfNamingDialog.show(
+      context,
+      voiceService: voiceService,
+    );
+
+    if (!mounted || chosenName == null) return;
+
+    await _exportToPdf(customName: chosenName.trim().isNotEmpty ? chosenName.trim() : null);
+  }
+
+  Future<void> _exportToPdf({String? customName}) async {
+    if (result.trim().isEmpty ||
+        result.contains('Position camera') ||
+        result.contains('Processing') ||
+        result.contains('isn\'t available') ||
+        result.contains('No Braille text detected')) {
       await voiceService.speak('No recognized Braille text available to export.');
       return;
     }
@@ -344,7 +251,11 @@ class _BrailleScreenState extends State<BrailleScreen> {
       final now = DateTime.now();
       final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
       final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-      final docTitle = 'Braille Document ($dateStr $timeStr)';
+      
+      final cleanTitle = customName != null ? BrailleService.cleanPdfName(customName) : '';
+      final docTitle = cleanTitle.isNotEmpty ? cleanTitle : 'Braille Document ($dateStr $timeStr)';
+
+      await voiceService.speak('Saving PDF as $docTitle.');
 
       final pdfFile = await brailleService.exportBrailleTextToPdf(result, title: docTitle);
       
@@ -367,12 +278,17 @@ class _BrailleScreenState extends State<BrailleScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('PDF saved and indexed into Digital Library (${pdfFile.path})'),
+          content: Text('PDF saved as "$docTitle.pdf" (${pdfFile.path}) and added to Digital Library'),
           backgroundColor: Colors.green,
         ),
       );
 
-      await voiceService.speak('Braille text successfully converted to PDF and saved to your digital library.');
+      await voiceService.speak('Braille text successfully converted to PDF and saved to your digital library as $docTitle.');
+      if (mounted) {
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -389,7 +305,9 @@ class _BrailleScreenState extends State<BrailleScreen> {
       cameraService.toggleFlash(false);
     }
     cameraService.dispose();
-    brailleService.dispose();
+    if (widget.brailleService == null) {
+      brailleService.dispose();
+    }
     super.dispose();
   }
 
@@ -404,11 +322,6 @@ class _BrailleScreenState extends State<BrailleScreen> {
       appBar: AppBar(
         title: const Text('Braille Page Recognition'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.vpn_key_rounded),
-            tooltip: 'Configure Gemini API Key',
-            onPressed: _showApiKeyDialog,
-          ),
           IconButton(
             icon: Icon(isMaximizedCamera ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded),
             tooltip: isMaximizedCamera ? 'Restore Camera View' : 'Enlarge Camera View for Large Page',
@@ -426,7 +339,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
           children: [
             // Enlarged Live Camera Viewfinder
             Expanded(
-              flex: isMaximizedCamera ? 7 : 5,
+              flex: isMaximizedCamera ? 7 : 4,
               child: Container(
                 margin: const EdgeInsets.fromLTRB(10.0, 6.0, 10.0, 4.0),
                 decoration: BoxDecoration(
@@ -476,19 +389,6 @@ class _BrailleScreenState extends State<BrailleScreen> {
                           ],
                         ),
                       ),
-                    // Large Page Framing Alignment Guide
-                    Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: isScanning
-                              ? Colors.greenAccent
-                              : (isMaximizedCamera ? Colors.amberAccent.withAlpha(160) : Colors.white54),
-                          width: 2,
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    ),
                     // Quick-Toggle Floating Expand/Compact Badge
                     Positioned(
                       top: 10,
@@ -556,7 +456,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
                     SizedBox(
                       height: 50,
                       width: 50,
@@ -611,19 +511,19 @@ class _BrailleScreenState extends State<BrailleScreen> {
                         children: [
                           Expanded(
                             child: SizedBox(
-                              height: 52,
+                              height: 50,
                               child: ElevatedButton.icon(
                                 onPressed: isScanning ? null : _scanBraille,
                                 icon: isScanning
                                     ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
+                                        width: 18,
+                                        height: 18,
                                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                       )
-                                    : const Icon(Icons.camera_alt, size: 24),
+                                    : const Icon(Icons.camera_alt, size: 20),
                                 label: Text(
                                   isScanning ? 'Processing...' : 'Scan Braille',
-                                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold),
                                 ),
                                 style: ElevatedButton.styleFrom(
                                   shape: RoundedRectangleBorder(
@@ -636,46 +536,24 @@ class _BrailleScreenState extends State<BrailleScreen> {
                           if (hasRecognizedText) ...[
                             const SizedBox(width: 8),
                             SizedBox(
-                              height: 52,
+                              height: 50,
                               child: ElevatedButton.icon(
-                                onPressed: isEnhancing ? null : _enhanceText,
-                                icon: isEnhancing
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                      )
-                                    : const Icon(Icons.auto_fix_high, size: 20),
-                                label: const Text('Enhance', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.teal.shade700,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              height: 52,
-                              child: ElevatedButton.icon(
-                                onPressed: isExportingPdf ? null : _exportToPdf,
+                                onPressed: isExportingPdf ? null : _promptAndExportPdf,
                                 icon: isExportingPdf
                                     ? const SizedBox(
                                         width: 18,
                                         height: 18,
                                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                                       )
-                                    : const Icon(Icons.picture_as_pdf, size: 22),
-                                label: const Text('PDF', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                                    : const Icon(Icons.picture_as_pdf, size: 20),
+                                label: const Text('PDF', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.deepOrangeAccent,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
+                                    backgroundColor: Colors.deepOrangeAccent,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
                                   ),
-                                ),
                               ),
                             ),
                           ],
@@ -684,8 +562,8 @@ class _BrailleScreenState extends State<BrailleScreen> {
                       const SizedBox(height: 8),
                       VoiceButton(
                         label: 'VOICE COMMAND',
-                        subtitle: 'Tap to speak: "Scan", "Expand", or "PDF"',
-                        activeSubtitle: 'Listening... say "Scan" or "Expand"',
+                        subtitle: 'Tap to speak: "Scan" or "Save PDF as [name]"',
+                        activeSubtitle: 'Listening... say "Scan" or "Save PDF as [name]"',
                         isListening: isListening,
                         onPressed: _handleVoiceCommand,
                         primaryColor: const Color(0xFF1E293B),
