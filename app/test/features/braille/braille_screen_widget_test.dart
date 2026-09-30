@@ -34,7 +34,12 @@ void main() {
       mockVoiceService = MockVoiceService();
       mockCameraService = MockCameraService();
       mockStorageService = MockStorageService();
+      when(() => mockVoiceService.speak(any(), awaitCompletion: any(named: 'awaitCompletion'))).thenAnswer((_) async {});
       when(() => mockVoiceService.speak(any())).thenAnswer((_) async {});
+      when(() => mockVoiceService.listen(
+        listenDurationSeconds: any(named: 'listenDurationSeconds'),
+        pauseDurationSeconds: any(named: 'pauseDurationSeconds'),
+      )).thenAnswer((_) async => null);
       when(() => mockVoiceService.listen()).thenAnswer((_) async => null);
       when(() => mockVoiceService.listen(listenDurationSeconds: any(named: 'listenDurationSeconds'))).thenAnswer((_) async => null);
       when(() => mockCameraService.initCamera(resolution: any(named: 'resolution'))).thenAnswer((_) async => true);
@@ -43,7 +48,8 @@ void main() {
       when(() => mockCameraService.toggleFlash(any())).thenAnswer((_) async {});
       when(() => mockCameraService.dispose()).thenReturn(null);
       when(() => mockStorageService.getSetting(any())).thenAnswer((_) async => null);
-      when(() => mockStorageService.setSetting(any(), any())).thenAnswer((_) async {});
+      when(() => mockStorageService.saveDocument(any())).thenAnswer((_) async => 1);
+      when(() => mockStorageService.database).thenThrow(Exception('Widget test storage'));
     });
 
     Widget createTestableWidget({
@@ -121,6 +127,66 @@ void main() {
       expect(find.byTooltip('Restore Camera View'), findsOneWidget);
     });
 
+    testWidgets('Tapping maximize button automatically triggers scanning sequence', (tester) async {
+      final mockBrailleService = MockBrailleService();
+      when(() => mockCameraService.takePicture()).thenAnswer((_) async => XFile('mock/test.jpg'));
+      when(() => mockBrailleService.scanBrailleWithBorderCrop(any(), enableBorderCrop: any(named: 'enableBorderCrop')))
+          .thenAnswer((_) async => BrailleScanResult(
+            text: 'Scanned After Expand',
+            pageBorder: PageBorderDetector.createFallbackBorder(100, 100),
+            isBorderDetected: false,
+            originalWidth: 100,
+            originalHeight: 100,
+            croppedWidth: 100,
+            croppedHeight: 100,
+            elapsed: Duration.zero,
+          ));
+
+      await tester.pumpWidget(createTestableWidget(brailleService: mockBrailleService));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final expandBtn = find.byTooltip('Enlarge Camera View for Large Page');
+      expect(expandBtn, findsOneWidget);
+
+      await tester.tap(expandBtn);
+      for (int i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+
+      verify(() => mockVoiceService.speak('Camera area enlarged for reading large Braille pages.', awaitCompletion: any(named: 'awaitCompletion'))).called(1);
+      verify(() => mockVoiceService.speak('Scanning Braille page.')).called(1);
+      verify(() => mockBrailleService.scanBrailleWithBorderCrop(any(), enableBorderCrop: false)).called(1);
+      verify(() => mockVoiceService.speak('Braille recognition complete. Recognized text: Scanned After Expand', awaitCompletion: any(named: 'awaitCompletion'))).called(1);
+    });
+
+    testWidgets('Voice command "expand" enlarges camera view and automatically triggers scan', (tester) async {
+      final mockBrailleService = MockBrailleService();
+      when(() => mockCameraService.takePicture()).thenAnswer((_) async => XFile('mock/test.jpg'));
+      when(() => mockBrailleService.scanBrailleWithBorderCrop(any(), enableBorderCrop: any(named: 'enableBorderCrop')))
+          .thenAnswer((_) async => BrailleScanResult(
+            text: 'Braille Voice Expanded Result',
+            pageBorder: PageBorderDetector.createFallbackBorder(100, 100),
+            isBorderDetected: false,
+            originalWidth: 100,
+            originalHeight: 100,
+            croppedWidth: 100,
+            croppedHeight: 100,
+            elapsed: Duration.zero,
+          ));
+
+      when(() => mockVoiceService.listen()).thenAnswer((_) async => 'expand');
+
+      await tester.pumpWidget(createTestableWidget(brailleService: mockBrailleService));
+      for (int i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+
+      verify(() => mockVoiceService.speak('Camera area enlarged for reading large Braille pages.', awaitCompletion: any(named: 'awaitCompletion'))).called(1);
+      verify(() => mockVoiceService.speak('Scanning Braille page.')).called(1);
+      verify(() => mockBrailleService.scanBrailleWithBorderCrop(any(), enableBorderCrop: false)).called(1);
+      verify(() => mockVoiceService.speak('Braille recognition complete. Recognized text: Braille Voice Expanded Result', awaitCompletion: any(named: 'awaitCompletion'))).called(1);
+    });
+
     testWidgets('Does not render border crop HUD or demo buttons', (tester) async {
       await tester.pumpWidget(createTestableWidget());
       await tester.pump(const Duration(milliseconds: 100));
@@ -163,7 +229,11 @@ void main() {
 
       verifyInOrder([
         () => mockVoiceService.speak('Braille recognition complete. Recognized text: Recognized Braille Text Sample'),
-        () => mockVoiceService.listen(),
+        () => mockVoiceService.speak('Say again to scan another page, say save PDF to export, or say home to return to the main menu.'),
+        () => mockVoiceService.listen(
+          listenDurationSeconds: any(named: 'listenDurationSeconds'),
+          pauseDurationSeconds: any(named: 'pauseDurationSeconds'),
+        ),
       ]);
     });
 
@@ -182,17 +252,16 @@ void main() {
             elapsed: Duration.zero,
           ));
 
-      final testPdf = File('${Directory.systemTemp.path}/test_biology_notes.pdf');
-      await testPdf.writeAsString('%PDF mock');
+      final testPdf = File('mock/path/test_biology_notes.pdf');
       when(() => mockBrailleService.exportBrailleTextToPdf(any(), title: any(named: 'title')))
           .thenAnswer((_) async => testPdf);
 
-      int listenCount = 0;
-      when(() => mockVoiceService.listen()).thenAnswer((_) async {
-        listenCount++;
-        if (listenCount >= 2) {
-          return 'save pdf as biology notes';
-        }
+      when(() => mockVoiceService.listen(
+        listenDurationSeconds: any(named: 'listenDurationSeconds'),
+        pauseDurationSeconds: any(named: 'pauseDurationSeconds'),
+      )).thenAnswer((invocation) async {
+        final dur = invocation.namedArguments[#listenDurationSeconds] as int?;
+        if (dur == 15) return 'save pdf as biology notes';
         return null;
       });
 
@@ -218,21 +287,19 @@ void main() {
 
       final navState = tester.state<NavigatorState>(find.byType(Navigator));
       navState.pushNamed('/braille');
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.text('Braille Page Recognition'), findsOneWidget);
 
       final scanButton = find.text('Scan Braille');
       await tester.tap(scanButton);
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 500));
+      for (int i = 0; i < 15; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+      }
 
       expect(find.text('Home Page Screen'), findsOneWidget);
       expect(find.text('Braille Page Recognition'), findsNothing);
-
-      if (await testPdf.exists()) {
-        await testPdf.delete();
-      }
     });
   });
 }

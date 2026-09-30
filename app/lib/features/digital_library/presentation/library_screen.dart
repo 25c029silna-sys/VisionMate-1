@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../../../core/storage/storage_service.dart';
 import '../../../core/voice/voice_service.dart';
+import '../../../core/voice/voice_post_process_helper.dart';
 import '../../../widgets/voice_button.dart';
 import '../data/embedding_store.dart';
 import '../domain/library_service.dart';
@@ -21,13 +21,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   late StorageService storageService;
   late LibraryService libraryService;
 
-  String status = 'Smart digital library ready. Search by voice, browse books, or import PDFs.';
+  String status = 'Smart digital library ready. Search by voice, browse documents, or add notes.';
   List<Map<String, dynamic>> searchResults = [];
   List<Map<String, dynamic>> allBooks = [];
   bool isSearching = false;
   bool isLoadingBooks = false;
-  bool isImportingPdf = false;
-  String selectedFilter = 'all'; // 'all', 'pdf', 'notes', 'search'
+  String selectedFilter = 'all'; // 'all', 'notes', 'search'
   Timer? _retryTimer;
 
   @override
@@ -44,9 +43,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     await _seedSampleDocumentsIfEmpty();
     await _loadAvailableBooks();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
       await voiceService.speak(
-        'Digital library ready. Showing $_pdfCount PDF books and ${allBooks.length} total items. Tap Voice Search or browse available books below.',
+        'Digital library ready. Showing ${allBooks.length} available documents. State your search query now.',
+        awaitCompletion: true,
       );
+      if (mounted) {
+        await _searchLibrary();
+      }
     });
   }
 
@@ -57,9 +61,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
     });
     try {
       final docs = await libraryService.fetchAvailableDocuments();
+      // Exclude imported PDFs so digital library exclusively contains manuals, guides, and user notes
+      final filteredDocs = docs.where((b) {
+        final st = (b['source_type'] as String? ?? '').toLowerCase();
+        return st != 'pdf_import' && st != 'scanned_pdf_ocr';
+      }).toList();
       if (mounted) {
         setState(() {
-          allBooks = docs;
+          allBooks = filteredDocs;
           isLoadingBooks = false;
         });
       }
@@ -98,26 +107,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
-  int get _pdfCount => allBooks.where((b) {
+  int get _noteCount => allBooks.where((b) {
         final st = (b['source_type'] as String? ?? '').toLowerCase();
-        final title = (b['title'] as String? ?? '').toLowerCase();
-        return st.contains('pdf') || title.endsWith('.pdf');
+        return st.contains('note') || st == 'user_note';
       }).length;
 
-  int get _noteCount => allBooks.length - _pdfCount;
-
   List<Map<String, dynamic>> get _filteredBooks {
-    if (selectedFilter == 'pdf') {
+    if (selectedFilter == 'notes') {
       return allBooks.where((b) {
         final st = (b['source_type'] as String? ?? '').toLowerCase();
-        final title = (b['title'] as String? ?? '').toLowerCase();
-        return st.contains('pdf') || title.endsWith('.pdf');
-      }).toList();
-    } else if (selectedFilter == 'notes') {
-      return allBooks.where((b) {
-        final st = (b['source_type'] as String? ?? '').toLowerCase();
-        final title = (b['title'] as String? ?? '').toLowerCase();
-        return !st.contains('pdf') && !title.endsWith('.pdf');
+        return st.contains('note') || st == 'user_note';
       }).toList();
     } else if (selectedFilter == 'search') {
       return searchResults;
@@ -125,75 +124,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return allBooks;
   }
 
-  Future<void> _importPdfFile() async {
-    if (isImportingPdf) return;
-    try {
-      setState(() {
-        isImportingPdf = true;
-        status = 'Opening file picker for PDF books...';
-      });
-      await voiceService.speak('Select a PDF book from your device storage.');
-
-      final picked = await FilePicker.pickFile(
-        type: FileType.custom,
-        allowedExtensions: ['pdf'],
-      );
-
-      if (picked != null && picked.path != null) {
-        final filePath = picked.path!;
-        final file = File(filePath);
-        final fileName = picked.name;
-
-        if (mounted) {
-          setState(() {
-            status = 'Extracting and indexing "$fileName"...';
-          });
-        }
-        await voiceService.speak('Importing and indexing $fileName into your library.');
-
-        await libraryService.importAndIndexPdf(file);
-        await _loadAvailableBooks();
-
-        if (mounted) {
-          setState(() {
-            selectedFilter = 'pdf';
-            status = 'Successfully imported "$fileName" into library.';
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Successfully imported and indexed "$fileName"'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-        await voiceService.speak('$fileName has been indexed into your library and is ready to read.');
-      } else {
-        if (mounted) {
-          setState(() {
-            status = 'PDF import cancelled.';
-          });
-        }
-      }
-    } catch (e) {
-      debugPrint('LibraryScreen: Error importing PDF: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to import PDF: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-      await voiceService.speak('Failed to import PDF file.');
-    } finally {
-      if (mounted) {
-        setState(() {
-          isImportingPdf = false;
-        });
-      }
-    }
-  }
 
   Future<void> _confirmDeleteBook(Map<String, dynamic> book) async {
     final title = book['title'] as String? ?? 'Untitled Book';
@@ -377,7 +307,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   Expanded(
                     child: ElevatedButton.icon(
                       onPressed: () async {
-                        await voiceService.speak('Reading $title. $text');
+                        await voiceService.speak('Reading $title. $text', awaitCompletion: true);
+                        if (sheetContext.mounted) {
+                          await _promptPostReadOptions(title, text);
+                        }
                       },
                       icon: const Icon(Icons.volume_up_rounded, size: 20),
                       label: const Text('Read Aloud'),
@@ -512,7 +445,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       status = 'Listening for your search query...';
     });
 
-    final rawQuery = await voiceService.listen();
+    final rawQuery = await voiceService.listen(listenDurationSeconds: 15, pauseDurationSeconds: 4);
 
     if (!mounted) return;
 
@@ -520,7 +453,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (mounted) {
         setState(() {
           isSearching = false;
-          status = 'Tap Voice Search button to speak a query.';
+          status = 'No query heard. Tap Voice Search button to speak a query.';
         });
       }
       return;
@@ -529,7 +462,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final query = rawQuery.trim();
     final lower = query.toLowerCase();
 
-    if (lower == 'back' || lower == 'home' || lower == 'exit' || lower == 'close') {
+    if (VoicePostProcessHelper.isHomeOrExit(lower)) {
       setState(() {
         isSearching = false;
       });
@@ -551,7 +484,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       setState(() {
         isSearching = false;
       });
-      await _importPdfFile();
+      await voiceService.speak('PDF import is not available in the digital library. You can add notes or search existing documents.');
       return;
     }
 
@@ -574,11 +507,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     if (lower.contains('show pdf') || lower.contains('pdfs')) {
       setState(() {
-        selectedFilter = 'pdf';
+        selectedFilter = 'all';
         isSearching = false;
-        status = 'Showing all available PDF books ($_pdfCount found).';
+        status = 'Showing all ${allBooks.length} available library documents.';
       });
-      await voiceService.speak('Showing $_pdfCount available PDF books.');
+      await voiceService.speak('PDF books are not in the digital library. Showing all ${allBooks.length} available documents.');
       return;
     }
 
@@ -597,12 +530,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
         isSearching = false;
       });
       await voiceService.speak(
-        'Available commands: speak any topic to search, say Import PDF to add a book, say Delete followed by the book title to remove it, or say Show PDFs to view all PDF files.',
+        'Available commands: speak any topic to search, say Add Note to add a document, say Delete followed by the title to remove it, or say Back to return home.',
       );
       return;
     }
 
+    await _executeSearch(query);
+  }
+
+  Future<void> _executeSearch(String query) async {
     setState(() {
+      isSearching = true;
       status = 'Performing vector search for: "$query"';
     });
 
@@ -610,20 +548,94 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     if (!mounted) return;
 
+    final filteredResults = results.where((b) {
+      final st = (b['source_type'] as String? ?? '').toLowerCase();
+      return st != 'pdf_import' && st != 'scanned_pdf_ocr';
+    }).toList();
+
     setState(() {
-      searchResults = results;
+      searchResults = filteredResults;
       selectedFilter = 'search';
       isSearching = false;
-      status = 'Search complete for "$query". Found ${results.length} relevant matches.';
+      status = 'Search complete for "$query". Found ${filteredResults.length} relevant matches.';
     });
 
     if (results.isNotEmpty) {
       final topResult = results.first;
       final title = topResult['title'] ?? 'Matching Document';
       final text = topResult['text'] ?? '';
-      await voiceService.speak('Found match: $title. $text');
+      await voiceService.speak('Found match: $title. $text', awaitCompletion: true);
     } else {
-      await voiceService.speak('No matching documents found in your library for $query.');
+      await voiceService.speak('No matching documents found in your library for $query.', awaitCompletion: true);
+    }
+
+    if (mounted) {
+      await _promptPostSearchOptions();
+    }
+  }
+
+  Future<void> _promptPostSearchOptions() async {
+    if (!mounted) return;
+    await voiceService.speak(
+      VoicePostProcessHelper.formatPrompt('search for another topic'),
+      awaitCompletion: true,
+    );
+    if (!mounted) return;
+    setState(() => isSearching = true);
+    final response = await voiceService.listen(listenDurationSeconds: 15, pauseDurationSeconds: 4);
+    if (!mounted) return;
+    setState(() => isSearching = false);
+
+    if (response == null || response.trim().isEmpty) {
+      if (mounted) {
+        setState(() {
+          status = 'Tap Voice Search button to speak a command.';
+        });
+      }
+      return;
+    }
+
+    if (VoicePostProcessHelper.isRepeatOrAgain(response)) {
+      await _searchLibrary();
+    } else if (VoicePostProcessHelper.isHomeOrExit(response)) {
+      await voiceService.speak('Returning to main menu.');
+      if (mounted) Navigator.pop(context);
+    } else {
+      final lower = response.toLowerCase().trim();
+      if (lower.contains('import') || lower.contains('import pdf')) {
+        await voiceService.speak('PDF import is not available in the digital library.');
+      } else if (lower.contains('add note') || lower.contains('add document')) {
+        await _showAddDocumentDialog();
+      } else {
+        await _executeSearch(response.trim());
+      }
+    }
+  }
+
+  Future<void> _promptPostReadOptions(String title, String text) async {
+    if (!mounted) return;
+    await voiceService.speak(
+      'Finished reading. Say again to hear this document again, or say home to return to the main menu.',
+      awaitCompletion: true,
+    );
+    if (!mounted) return;
+    setState(() => isSearching = true);
+    final response = await voiceService.listen(listenDurationSeconds: 15, pauseDurationSeconds: 4);
+    if (!mounted) return;
+    setState(() => isSearching = false);
+
+    if (response == null || response.trim().isEmpty) return;
+
+    if (VoicePostProcessHelper.isRepeatOrAgain(response)) {
+      await voiceService.speak('Reading $title. $text', awaitCompletion: true);
+      if (mounted) await _promptPostReadOptions(title, text);
+    } else if (VoicePostProcessHelper.isHomeOrExit(response)) {
+      await voiceService.speak('Returning to main menu.');
+      if (mounted) {
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+      }
     }
   }
 
@@ -822,17 +834,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
         title: const Text('Digital Library'),
         actions: [
           IconButton(
-            icon: isImportingPdf
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Icon(Icons.file_upload_outlined, color: Colors.deepOrangeAccent),
-            tooltip: 'Import PDF Book',
-            onPressed: isImportingPdf ? null : _importPdfFile,
-          ),
-          IconButton(
             icon: const Icon(Icons.note_add_rounded, color: Colors.purpleAccent),
             tooltip: 'Add Note / Document',
             onPressed: _showAddDocumentDialog,
@@ -870,7 +871,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'SEMANTIC VECTOR SEARCH & PDF BOOKS',
+                          'SEMANTIC VECTOR SEARCH & DIGITAL LIBRARY',
                           style: TextStyle(
                             fontSize: 10.5,
                             fontWeight: FontWeight.bold,
@@ -896,7 +897,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             // Search Trigger Button
             VoiceButton(
               label: 'Voice Search Library',
-              subtitle: 'Tap to speak: search books, "Import PDF", or "Delete <title>"',
+              subtitle: 'Tap to speak: search documents, "Add Note", or "Delete <title>"',
               activeSubtitle: 'Listening... speak query or "Delete <title>"',
               isListening: isSearching,
               onPressed: _searchLibrary,
@@ -906,45 +907,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
             const SizedBox(height: 10),
 
             // Action Quick Buttons Row
-            Row(
-              children: [
-                Expanded(
-                  child: SizedBox(
-                    height: 42,
-                    child: ElevatedButton.icon(
-                      onPressed: isImportingPdf ? null : _importPdfFile,
-                      icon: isImportingPdf
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.picture_as_pdf_rounded, size: 17),
-                      label: Text(isImportingPdf ? 'Importing...' : 'Import PDF Book'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.deepOrangeAccent.shade400,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
+            SizedBox(
+              height: 42,
+              child: ElevatedButton.icon(
+                onPressed: _showAddDocumentDialog,
+                icon: const Icon(Icons.note_add_rounded, size: 18),
+                label: const Text('Add Note or Document', style: TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.bold)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purple.shade700,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: SizedBox(
-                    height: 42,
-                    child: OutlinedButton.icon(
-                      onPressed: _showAddDocumentDialog,
-                      icon: const Icon(Icons.note_add_rounded, size: 17, color: Colors.purpleAccent),
-                      label: const Text('Add Note', style: TextStyle(color: Colors.white, fontSize: 13.5)),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Colors.purpleAccent),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -953,9 +927,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
-                  _buildFilterChip('all', 'All Books (${allBooks.length})', Icons.auto_stories_rounded),
-                  const SizedBox(width: 8),
-                  _buildFilterChip('pdf', 'PDF Books ($_pdfCount)', Icons.picture_as_pdf_rounded, activeColor: Colors.deepOrangeAccent),
+                  _buildFilterChip('all', 'All Documents (${allBooks.length})', Icons.auto_stories_rounded),
                   const SizedBox(width: 8),
                   _buildFilterChip('notes', 'Notes & Guides ($_noteCount)', Icons.note_rounded, activeColor: Colors.purpleAccent),
                   if (searchResults.isNotEmpty) ...[
@@ -973,11 +945,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 Text(
                   selectedFilter == 'search'
                       ? 'SEARCH MATCHES (${searchResults.length})'
-                      : selectedFilter == 'pdf'
-                          ? 'AVAILABLE PDF BOOKS ($_pdfCount)'
-                          : selectedFilter == 'notes'
-                              ? 'NOTES & GUIDES ($_noteCount)'
-                              : 'LIBRARY BOOKS & PDFS (${allBooks.length})',
+                      : selectedFilter == 'notes'
+                          ? 'NOTES & GUIDES ($_noteCount)'
+                          : 'LIBRARY DOCUMENTS (${allBooks.length})',
                   style: const TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
@@ -1014,29 +984,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                selectedFilter == 'pdf'
-                                    ? Icons.picture_as_pdf_outlined
-                                    : Icons.library_books_outlined,
+                                Icons.library_books_outlined,
                                 size: 48,
                                 color: Colors.grey.shade700,
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                selectedFilter == 'pdf'
-                                    ? 'No PDF books in library yet.\nTap "Import PDF Book" or scan Braille pages to export PDFs.'
-                                    : selectedFilter == 'search'
-                                        ? 'No matching results found.\nTry a different search query.'
-                                        : 'No books in library.\nImport a PDF or add notes to get started.',
+                                selectedFilter == 'search'
+                                    ? 'No matching results found.\nTry a different search query.'
+                                    : 'No documents in library.\nAdd notes or guides to get started.',
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(color: Colors.white54, fontSize: 14),
                               ),
                               const SizedBox(height: 16),
                               ElevatedButton.icon(
-                                onPressed: isImportingPdf ? null : _importPdfFile,
-                                icon: const Icon(Icons.file_upload_outlined, size: 18),
-                                label: const Text('Import PDF File'),
+                                onPressed: _showAddDocumentDialog,
+                                icon: const Icon(Icons.note_add_rounded, size: 18),
+                                label: const Text('Add Note or Document'),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.deepOrangeAccent.shade400,
+                                  backgroundColor: Colors.purple.shade700,
                                   foregroundColor: Colors.white,
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                 ),

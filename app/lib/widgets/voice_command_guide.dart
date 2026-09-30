@@ -26,8 +26,8 @@ class VoiceCommandGuideModal extends StatelessWidget {
         'icon': Icons.warning_amber_rounded,
         'color': Colors.redAccent,
         'route': '/emergency',
-        'keywords': ['emergency', 'sos', 'panic', 'help', 'danger', 'distress'],
-        'description': 'Triggers emergency alert with GPS location and calls trusted contact',
+        'keywords': ['emergency', 'sos', 'panic', 'help', 'danger', 'distress', 'contact', 'add contact', 'edit contact'],
+        'description': 'Triggers emergency alert with GPS location and allows voice-activated contact setup',
       },
       {
         'title': 'Braille Recognition',

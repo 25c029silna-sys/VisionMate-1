@@ -9,8 +9,8 @@ class VoiceGuideService {
   static const List<Map<String, String>> commandGuide = [
     {
       'title': 'Emergency SOS',
-      'command': 'Say Emergency, SOS, or Help me',
-      'description': 'Triggers emergency alert with GPS location and calls your trusted contact.',
+      'command': 'Say Emergency, SOS, or Contact',
+      'description': 'Triggers emergency alert with GPS location, or configure your emergency contact via voice.',
     },
     {
       'title': 'OCR Text Reader',

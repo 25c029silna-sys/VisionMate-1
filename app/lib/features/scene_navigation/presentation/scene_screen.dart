@@ -3,6 +3,7 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/voice/voice_service.dart';
+import '../../../core/voice/voice_post_process_helper.dart';
 import '../../../core/camera/camera_service.dart';
 import '../../../core/permissions/permission_service.dart';
 import '../../../widgets/voice_button.dart';
@@ -125,18 +126,23 @@ class _SceneScreenState extends State<SceneScreen> {
       return;
     }
 
+    await _handleVoiceCommandWithUtterance(command);
+  }
+
+  Future<void> _handleVoiceCommandWithUtterance(String command) async {
     final lower = command.toLowerCase().trim();
     if (lower.contains('stop')) {
       await voiceService.speak('Stopping playback.');
-    } else if (lower.contains('describe') || lower.contains('surroundings') || lower.contains('scan') || lower.contains('navigate') || lower.contains('explore')) {
+    } else if (lower.contains('describe') || lower.contains('surroundings') || lower.contains('scan') || lower.contains('navigate') || lower.contains('explore') || VoicePostProcessHelper.isRepeatOrAgain(lower)) {
       await _describeScene();
     } else if (lower.contains('repeat') || lower.contains('again')) {
       if (result.isNotEmpty) {
-        await voiceService.speak(result);
+        await voiceService.speak(result, awaitCompletion: true);
+        if (mounted) await _promptPostProcessOptions();
       }
     } else if (lower.contains('flash') || lower.contains('light')) {
       await _toggleFlash();
-    } else if (lower.contains('back') || lower.contains('home') || lower.contains('exit') || lower.contains('close')) {
+    } else if (VoicePostProcessHelper.isHomeOrExit(lower)) {
       await voiceService.speak('Returning to main menu.');
       if (mounted) Navigator.pop(context);
     } else if (lower.contains('help') || lower.contains('guide')) {
@@ -150,7 +156,6 @@ class _SceneScreenState extends State<SceneScreen> {
       }
     }
   }
-
 
   Future<void> _describeScene() async {
     if (isAnalyzing) return;
@@ -182,14 +187,51 @@ class _SceneScreenState extends State<SceneScreen> {
       setState(() {
         result = errorMsg;
       });
-      await voiceService.speak(errorMsg);
+      await voiceService.speak(errorMsg, awaitCompletion: true);
+      if (mounted) {
+        await _promptPostProcessOptions();
+      }
       return;
     }
 
     setState(() {
       result = text;
     });
-    await voiceService.speak(text);
+    await voiceService.speak(text, awaitCompletion: true);
+    if (mounted) {
+      await _promptPostProcessOptions();
+    }
+  }
+
+  Future<void> _promptPostProcessOptions() async {
+    if (!mounted) return;
+    await voiceService.speak(
+      VoicePostProcessHelper.formatPrompt('describe surroundings again'),
+      awaitCompletion: true,
+    );
+    if (!mounted) return;
+    setState(() => isListening = true);
+    final response = await voiceService.listen(listenDurationSeconds: 15, pauseDurationSeconds: 4);
+    if (!mounted) return;
+    setState(() => isListening = false);
+
+    if (response == null || response.trim().isEmpty) {
+      if (mounted) {
+        setState(() {
+          result = 'Tap microphone button to speak a command.';
+        });
+      }
+      return;
+    }
+
+    if (VoicePostProcessHelper.isRepeatOrAgain(response)) {
+      await _describeScene();
+    } else if (VoicePostProcessHelper.isHomeOrExit(response)) {
+      await voiceService.speak('Returning to main menu.');
+      if (mounted) Navigator.pop(context);
+    } else {
+      await _handleVoiceCommandWithUtterance(response);
+    }
   }
 
   @override

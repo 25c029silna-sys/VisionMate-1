@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../core/voice/voice_service.dart';
+import '../../../core/voice/voice_post_process_helper.dart';
 import '../../../core/storage/storage_service.dart';
 import '../../../widgets/voice_button.dart';
 import '../domain/emergency_service.dart';
+import '../domain/emergency_contact_voice_helper.dart';
 
 class EmergencyScreen extends StatefulWidget {
   const EmergencyScreen({super.key});
@@ -59,6 +61,13 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     });
   }
 
+  @visibleForTesting
+  Future<void> handleVoiceCommand() => _handleVoiceCommand();
+
+  @visibleForTesting
+  Future<void> startVoiceContactSetup({String? initialUtterance}) =>
+      _startVoiceContactSetup(initialUtterance: initialUtterance);
+
   Future<void> _handleVoiceCommand() async {
     _retryTimer?.cancel();
     if (isCountingDown) {
@@ -101,13 +110,13 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     final lower = command.toLowerCase().trim();
     if (lower.contains('sos') || lower.contains('help') || lower.contains('emergency') || lower.contains('call') || lower.contains('trigger')) {
       await _triggerSos();
-    } else if (lower.contains('contact') || lower.contains('add contact') || lower.contains('edit contact')) {
-      await _showAddContactDialog();
+    } else if (EmergencyContactVoiceHelper.isContactCommand(lower)) {
+      await _startVoiceContactSetup(initialUtterance: command);
     } else if (lower.contains('back') || lower.contains('home') || lower.contains('exit') || lower.contains('cancel') || lower.contains('close')) {
       await voiceService.speak('Returning to main menu.');
       if (mounted) Navigator.pop(context);
     } else if (lower.contains('help') || lower.contains('guide')) {
-      await voiceService.speak('Available commands: say SOS to trigger emergency alert, Contact to edit trusted contact, or Back to return home.');
+      await voiceService.speak('Available commands: say SOS to trigger emergency alert, Contact to add or edit trusted contact with voice, or Back to return home.');
     } else {
       await voiceService.speak('Command not recognized. Say SOS, Contact, or Back.');
       if (mounted && !isCountingDown) {
@@ -118,63 +127,336 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     }
   }
 
+  /// Interactive multi-turn voice configuration wizard for adding and editing emergency contacts.
+  /// Also handles one-shot commands like "add contact Mom 1234567890".
+  Future<void> _startVoiceContactSetup({String? initialUtterance}) async {
+    if (isCountingDown) return;
+
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+    await voiceService.stopSpeaking();
+    await voiceService.stopListening();
+
+    // Check if initial utterance was a direct command (e.g. "add contact Mom 1234567890")
+    if (initialUtterance != null) {
+      final direct = EmergencyContactVoiceHelper.parseDirectCommand(initialUtterance);
+      if (direct != null) {
+        await _confirmAndSaveContact(direct.name, direct.phone);
+        return;
+      }
+    }
+
+    String selectedName = contactName;
+    String selectedPhone = contactPhone;
+
+    // STEP 1: Ask for contact name
+    if (mounted) {
+      setState(() {
+        status = 'VOICE CONTACT SETUP: Say contact name, or "cancel"...';
+      });
+    }
+
+    final String namePrompt = contactName.isNotEmpty
+        ? 'Voice contact configuration. Current contact name is $contactName. Say a new name, say keep to leave it unchanged, or say cancel.'
+        : 'Voice contact configuration. Please say the emergency contact name, or say cancel.';
+
+    await voiceService.speak(namePrompt, awaitCompletion: true);
+
+    if (!mounted) return;
+    setState(() => isListening = true);
+
+    final spokenName = await voiceService.listen(listenDurationSeconds: 25, pauseDurationSeconds: 6);
+
+    if (!mounted) return;
+    setState(() => isListening = false);
+
+    if (spokenName == null || spokenName.trim().isEmpty) {
+      await voiceService.speak('Did not hear a name. Voice contact configuration cancelled.', awaitCompletion: true);
+      if (mounted) {
+        setState(() {
+          status = 'Contact setup timed out. Tap microphone to try again.';
+        });
+        await _promptPostContactOptions();
+      }
+      return;
+    }
+
+    if (EmergencyContactVoiceHelper.isCancellation(spokenName)) {
+      await voiceService.speak('Contact configuration cancelled.', awaitCompletion: true);
+      if (mounted) {
+        setState(() {
+          status = 'Contact configuration cancelled.';
+        });
+        await _promptPostContactOptions();
+      }
+      return;
+    }
+
+    if (EmergencyContactVoiceHelper.isKeepOrSkip(spokenName) && contactName.isNotEmpty) {
+      selectedName = contactName;
+    } else {
+      final cleaned = EmergencyContactVoiceHelper.cleanSpokenName(spokenName);
+      if (cleaned.isEmpty) {
+        await voiceService.speak('Could not recognize that name. Contact configuration cancelled.', awaitCompletion: true);
+        if (mounted) await _promptPostContactOptions();
+        return;
+      }
+      selectedName = cleaned;
+    }
+
+    // STEP 2: Ask for phone number
+    if (mounted) {
+      setState(() {
+        status = 'VOICE CONTACT SETUP: Name "$selectedName". Say phone number...';
+      });
+    }
+
+    final String phonePrompt = contactPhone.isNotEmpty
+        ? 'Name set to $selectedName. Current phone number is ${EmergencyContactVoiceHelper.formatPhoneNumberForSpeech(contactPhone)}. Take your time to speak each digit of the new number, say keep to leave it unchanged, or say cancel.'
+        : 'Name set to $selectedName. Please take your time to speak each digit of the phone number, or say cancel.';
+
+    await voiceService.speak(phonePrompt, awaitCompletion: true);
+
+    if (!mounted) return;
+    setState(() => isListening = true);
+
+    // Generous 35-second listening window and 7-second pause duration for hands-free speech
+    final spokenPhone = await voiceService.listen(listenDurationSeconds: 35, pauseDurationSeconds: 7);
+
+    if (!mounted) return;
+    setState(() => isListening = false);
+
+    if (spokenPhone == null || spokenPhone.trim().isEmpty) {
+      await voiceService.speak('Did not hear a phone number. Contact configuration cancelled.', awaitCompletion: true);
+      if (mounted) {
+        setState(() {
+          status = 'Phone number input timed out. Tap microphone to try again.';
+        });
+        await _promptPostContactOptions();
+      }
+      return;
+    }
+
+    if (EmergencyContactVoiceHelper.isCancellation(spokenPhone)) {
+      await voiceService.speak('Contact configuration cancelled.', awaitCompletion: true);
+      if (mounted) {
+        setState(() {
+          status = 'Contact configuration cancelled.';
+        });
+        await _promptPostContactOptions();
+      }
+      return;
+    }
+
+    if (EmergencyContactVoiceHelper.isKeepOrSkip(spokenPhone) && contactPhone.isNotEmpty) {
+      selectedPhone = contactPhone;
+    } else {
+      final parsed = EmergencyContactVoiceHelper.parseSpokenPhoneNumber(spokenPhone);
+      if (parsed == null || parsed.length < 3) {
+        await voiceService.speak('Could not detect a valid phone number. Contact configuration cancelled.', awaitCompletion: true);
+        if (mounted) {
+          setState(() {
+            status = 'Invalid phone number spoken. Configuration cancelled.';
+          });
+          await _promptPostContactOptions();
+        }
+        return;
+      }
+      selectedPhone = parsed;
+    }
+
+    // STEP 3: Confirm and save
+    await _confirmAndSaveContact(selectedName, selectedPhone);
+  }
+
+  /// Spoken confirmation step for voice contact setup.
+  Future<void> _confirmAndSaveContact(String name, String phone) async {
+    final spokenDigits = EmergencyContactVoiceHelper.formatPhoneNumberForSpeech(phone);
+    final confirmPrompt = 'Emergency contact: $name, phone number $spokenDigits. Say confirm to save, or cancel to discard.';
+
+    if (mounted) {
+      setState(() {
+        status = 'VOICE CONTACT SETUP: Confirming $name ($phone). Say "confirm" or "cancel"...';
+      });
+    }
+
+    await voiceService.speak(confirmPrompt, awaitCompletion: true);
+
+    if (!mounted) return;
+    setState(() => isListening = true);
+
+    final response = await voiceService.listen(listenDurationSeconds: 20, pauseDurationSeconds: 6);
+
+    if (!mounted) return;
+    setState(() => isListening = false);
+
+    if (response != null && EmergencyContactVoiceHelper.isConfirmation(response)) {
+      await storageService.saveTrustedContact(name: name, phone: phone);
+      if (mounted) {
+        setState(() {
+          contactName = name;
+          contactPhone = phone;
+          status = 'Emergency contact saved: $name ($phone).';
+        });
+      }
+      await voiceService.speak('Emergency contact $name saved successfully.', awaitCompletion: true);
+    } else if (response != null && EmergencyContactVoiceHelper.isCancellation(response)) {
+      if (mounted) {
+        setState(() {
+          status = 'Contact configuration discarded.';
+        });
+      }
+      await voiceService.speak('Contact changes discarded.', awaitCompletion: true);
+    } else {
+      if (mounted) {
+        setState(() {
+          status = 'Confirmation not detected. Contact was not saved.';
+        });
+      }
+      await voiceService.speak('Confirmation not detected. Contact was not saved.', awaitCompletion: true);
+    }
+
+    if (mounted) {
+      await _promptPostContactOptions();
+    }
+  }
+
+  Future<void> _promptPostContactOptions() async {
+    if (!mounted) return;
+    await voiceService.speak(
+      'Say edit contact to configure again, say SOS for emergency, or say home to return to the main menu.',
+      awaitCompletion: true,
+    );
+    if (!mounted) return;
+    setState(() => isListening = true);
+    final response = await voiceService.listen(listenDurationSeconds: 15, pauseDurationSeconds: 4);
+    if (!mounted) return;
+    setState(() => isListening = false);
+
+    if (response == null || response.trim().isEmpty) return;
+
+    if (EmergencyContactVoiceHelper.isContactCommand(response) || VoicePostProcessHelper.isRepeatOrAgain(response)) {
+      await _startVoiceContactSetup();
+    } else if (VoicePostProcessHelper.isHomeOrExit(response)) {
+      await voiceService.speak('Returning to main menu.');
+      if (mounted) Navigator.pop(context);
+    } else if (response.toLowerCase().contains('sos') || response.toLowerCase().contains('emergency') || response.toLowerCase().contains('help')) {
+      await _triggerSos();
+    }
+  }
+
   Future<void> _showAddContactDialog() async {
     final nameController = TextEditingController(text: contactName);
     final phoneController = TextEditingController(text: contactPhone);
 
     await showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: const Color(0xFF161B22),
-        title: const Text('Configure Trusted Contact', style: TextStyle(color: Colors.white)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Contact Name',
-                labelStyle: TextStyle(color: Colors.white70),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF161B22),
+          title: const Text('Configure Trusted Contact', style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Prominent voice assistant button at top of dialog
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.pop(dialogContext);
+                    await _startVoiceContactSetup();
+                  },
+                  icon: const Icon(Icons.mic, color: Colors.white),
+                  label: const Text('START VOICE SETUP WIZARD', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent.shade700,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
               ),
-              style: const TextStyle(color: Colors.white),
+              const SizedBox(height: 12),
+              TextField(
+                controller: nameController,
+                decoration: InputDecoration(
+                  labelText: 'Contact Name',
+                  labelStyle: const TextStyle(color: Colors.white70),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.mic, color: Colors.redAccent),
+                    tooltip: 'Speak Contact Name',
+                    onPressed: () async {
+                      await voiceService.speak('Please say the contact name.', awaitCompletion: true);
+                      final spoken = await voiceService.listen(listenDurationSeconds: 12, pauseDurationSeconds: 3);
+                      if (spoken != null && spoken.trim().isNotEmpty && !EmergencyContactVoiceHelper.isCancellation(spoken)) {
+                        final clean = EmergencyContactVoiceHelper.cleanSpokenName(spoken);
+                        if (clean.isNotEmpty) {
+                          setDialogState(() {
+                            nameController.text = clean;
+                          });
+                          await voiceService.speak('Name set to $clean');
+                        }
+                      }
+                    },
+                  ),
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: phoneController,
+                keyboardType: TextInputType.phone,
+                decoration: InputDecoration(
+                  labelText: 'Phone Number',
+                  labelStyle: const TextStyle(color: Colors.white70),
+                  hintText: '+1234567890',
+                  hintStyle: const TextStyle(color: Colors.white30),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.mic, color: Colors.redAccent),
+                    tooltip: 'Speak Phone Number',
+                    onPressed: () async {
+                      await voiceService.speak('Please say the phone number.', awaitCompletion: true);
+                      final spoken = await voiceService.listen(listenDurationSeconds: 15, pauseDurationSeconds: 3);
+                      if (spoken != null && spoken.trim().isNotEmpty && !EmergencyContactVoiceHelper.isCancellation(spoken)) {
+                        final parsed = EmergencyContactVoiceHelper.parseSpokenPhoneNumber(spoken);
+                        if (parsed.isNotEmpty) {
+                          setDialogState(() {
+                            phoneController.text = parsed;
+                          });
+                          final speech = EmergencyContactVoiceHelper.formatPhoneNumberForSpeech(parsed);
+                          await voiceService.speak('Phone number set to $speech');
+                        }
+                      }
+                    },
+                  ),
+                ),
+                style: const TextStyle(color: Colors.white),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: phoneController,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Phone Number',
-                labelStyle: TextStyle(color: Colors.white70),
-                hintText: '+1234567890',
-                hintStyle: TextStyle(color: Colors.white30),
-              ),
-              style: const TextStyle(color: Colors.white),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                final phone = phoneController.text.trim();
+                await storageService.saveTrustedContact(name: name, phone: phone);
+                if (mounted) {
+                  setState(() {
+                    contactName = name;
+                    contactPhone = phone;
+                  });
+                }
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                await voiceService.speak('Trusted contact updated.');
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+              child: const Text('Save Contact'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final name = nameController.text.trim();
-              final phone = phoneController.text.trim();
-              await storageService.saveTrustedContact(name: name, phone: phone);
-              if (mounted) {
-                setState(() {
-                  contactName = name;
-                  contactPhone = phone;
-                });
-              }
-              if (dialogContext.mounted) Navigator.pop(dialogContext);
-              await voiceService.speak('Trusted contact updated.');
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-            child: const Text('Save Contact'),
-          ),
-        ],
       ),
     );
   }
@@ -206,8 +488,8 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     await voiceService.stopListening();
 
     if (contactPhone.isEmpty) {
-      await voiceService.speak('No trusted contact configured. Please add a trusted contact first.');
-      await _showAddContactDialog();
+      await voiceService.speak('No trusted contact configured. Starting voice contact setup.');
+      await _startVoiceContactSetup();
       if (contactPhone.isEmpty) return;
     }
 
@@ -307,6 +589,11 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
         title: const Text('Emergency SOS'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.mic, color: Colors.white),
+            tooltip: 'Voice Configure Contact',
+            onPressed: isCountingDown ? null : () => _startVoiceContactSetup(),
+          ),
+          IconButton(
             icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white),
             tooltip: 'Configure Trusted Contact',
             onPressed: isCountingDown ? null : _showAddContactDialog,
@@ -364,6 +651,11 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                                     ),
                                   ],
                                 ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.mic, color: Colors.redAccent),
+                                tooltip: 'Voice Configure Contact',
+                                onPressed: isCountingDown ? null : () => _startVoiceContactSetup(),
                               ),
                               TextButton(
                                 onPressed: isCountingDown ? null : _showAddContactDialog,
@@ -520,14 +812,32 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
                         ] else ...[
                           // Voice Command Button
                           VoiceButton(
-                            label: 'VOICE SOS COMMAND',
+                            label: 'VOICE SOS & CONTACT COMMAND',
                             subtitle: 'Tap to speak: "SOS", "Contact", or "Back"',
-                            activeSubtitle: 'Listening... say "SOS" for immediate help',
+                            activeSubtitle: 'Listening... say "SOS" or "Add Contact"',
                             isListening: isListening,
                             onPressed: _handleVoiceCommand,
                             height: 72,
                             primaryColor: const Color(0xFF1E293B),
                             activeColor: Colors.red.shade700,
+                          ),
+                          const SizedBox(height: 14),
+
+                          // Dedicated Voice Configure Contact Button
+                          SizedBox(
+                            height: 54,
+                            child: OutlinedButton.icon(
+                              onPressed: isCountingDown ? null : () => _startVoiceContactSetup(),
+                              icon: const Icon(Icons.record_voice_over_rounded, color: Colors.redAccent, size: 24),
+                              label: Text(
+                                contactPhone.isNotEmpty ? 'VOICE EDIT CONTACT' : 'VOICE ADD CONTACT',
+                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: Colors.redAccent, width: 1.5),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              ),
+                            ),
                           ),
                           const SizedBox(height: 14),
 

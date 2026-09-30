@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../../core/camera/camera_service.dart';
 import '../../../core/storage/storage_service.dart';
 import '../../../core/voice/voice_service.dart';
+import '../../../core/voice/voice_post_process_helper.dart';
 import '../../../widgets/voice_button.dart';
 import '../../digital_library/data/embedding_store.dart';
 import '../../digital_library/domain/library_service.dart';
@@ -68,14 +69,19 @@ class _BrailleScreenState extends State<BrailleScreen> {
     await voiceService.speak(nextState ? 'Flashlight turned on.' : 'Flashlight turned off.');
   }
 
-  void _toggleMaximizeCamera() {
+  Future<void> _toggleMaximizeCamera({bool autoScan = true}) async {
     final nextState = !isMaximizedCamera;
     setState(() {
       isMaximizedCamera = nextState;
     });
-    voiceService.speak(nextState
-        ? 'Camera area enlarged for reading large Braille pages.'
-        : 'Camera area restored to standard view.');
+    if (nextState) {
+      await voiceService.speak('Camera area enlarged for reading large Braille pages.', awaitCompletion: true);
+      if (autoScan && mounted) {
+        await _scanBraille();
+      }
+    } else {
+      await voiceService.speak('Camera area restored to standard view.');
+    }
   }
 
   Future<void> _handleVoiceCommand() async {
@@ -105,15 +111,19 @@ class _BrailleScreenState extends State<BrailleScreen> {
 
     if (command == null || command.trim().isEmpty) return;
 
+    await _handleVoiceCommandWithUtterance(command);
+  }
+
+  Future<void> _handleVoiceCommandWithUtterance(String command) async {
     final lower = command.toLowerCase().trim();
-    if (lower.contains('scan') || lower.contains('capture') || lower.contains('read') || lower.contains('process')) {
+    if (lower.contains('scan') || lower.contains('capture') || lower.contains('read') || lower.contains('process') || VoicePostProcessHelper.isRepeatOrAgain(lower)) {
       await _scanBraille();
     } else if (lower.contains('flash') || lower.contains('light')) {
       await _toggleFlash();
     } else if (lower.contains('expand') || lower.contains('maximize') || lower.contains('fullscreen') || lower.contains('large')) {
-      _toggleMaximizeCamera();
+      await _toggleMaximizeCamera();
     } else if (lower.contains('minimize') || lower.contains('shrink') || lower.contains('restore') || lower.contains('normal')) {
-      if (isMaximizedCamera) _toggleMaximizeCamera();
+      if (isMaximizedCamera) await _toggleMaximizeCamera(autoScan: false);
     } else if (lower.contains('pdf') || lower.contains('export') || lower.contains('save')) {
       final customName = BrailleService.extractPdfNameFromCommand(command);
       if (customName != null && customName.isNotEmpty) {
@@ -123,9 +133,10 @@ class _BrailleScreenState extends State<BrailleScreen> {
       }
     } else if (lower.contains('repeat') || lower.contains('again')) {
       if (result.isNotEmpty) {
-        await voiceService.speak('Current Braille text: $result');
+        await voiceService.speak('Current Braille text: $result', awaitCompletion: true);
+        if (mounted) await _promptPostProcessOptions();
       }
-    } else if (lower.contains('back') || lower.contains('home') || lower.contains('exit') || lower.contains('close')) {
+    } else if (VoicePostProcessHelper.isHomeOrExit(lower)) {
       await voiceService.speak('Returning to main menu.');
       if (mounted) Navigator.pop(context);
     } else if (lower.contains('help') || lower.contains('guide')) {
@@ -137,6 +148,37 @@ class _BrailleScreenState extends State<BrailleScreen> {
           result = 'Tap microphone button to speak a command.';
         });
       }
+    }
+  }
+
+  Future<void> _promptPostProcessOptions() async {
+    if (!mounted) return;
+    await voiceService.speak(
+      'Say again to scan another page, say save PDF to export, or say home to return to the main menu.',
+      awaitCompletion: true,
+    );
+    if (!mounted) return;
+    setState(() => isListening = true);
+    final response = await voiceService.listen(listenDurationSeconds: 15, pauseDurationSeconds: 4);
+    if (!mounted) return;
+    setState(() => isListening = false);
+
+    if (response == null || response.trim().isEmpty) {
+      if (mounted) {
+        setState(() {
+          result = 'Tap microphone button to speak a command.';
+        });
+      }
+      return;
+    }
+
+    if (VoicePostProcessHelper.isRepeatOrAgain(response)) {
+      await _scanBraille();
+    } else if (VoicePostProcessHelper.isHomeOrExit(response)) {
+      await voiceService.speak('Returning to main menu.');
+      if (mounted) Navigator.pop(context);
+    } else {
+      await _handleVoiceCommandWithUtterance(response);
     }
   }
 
@@ -197,9 +239,9 @@ class _BrailleScreenState extends State<BrailleScreen> {
         }
       });
 
-      await voiceService.speak('Braille recognition complete. Recognized text: $extracted');
+      await voiceService.speak('Braille recognition complete. Recognized text: $extracted', awaitCompletion: true);
       if (mounted) {
-        await _handleVoiceCommand();
+        await _promptPostProcessOptions();
       }
     } catch (e, stack) {
       debugPrint('BrailleScreen scanning error: $e\n$stack');
@@ -289,7 +331,8 @@ class _BrailleScreenState extends State<BrailleScreen> {
           Navigator.of(context).popUntil((route) => route.isFirst);
         }
       }
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('BrailleScreen export error: $e\n$stack');
       if (!mounted) return;
       setState(() {
         isExportingPdf = false;

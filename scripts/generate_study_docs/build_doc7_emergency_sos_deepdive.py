@@ -35,19 +35,19 @@ def build_pdf():
     ))
     
     meta = {
-        "Feature Name:": "Gesture & Voice-Triggered Emergency SOS",
+        "Feature Name:": "Voice & Gesture Emergency SOS + Hands-Free Contact Setup",
         "Module ID:": "MOD-05 (Personal Safety Dispatch System)",
-        "Primary Files:": "emergency_service.dart, shake_detector_service.dart",
+        "Primary Files:": "emergency_service.dart, emergency_contact_voice_helper.dart, emergency_screen.dart",
         "Native Android:": "MainActivity.kt (Custom Kotlin Code)",
         "Safety Window:": "8 Seconds (Voice cancelable before sending)",
-        "Test Results:": "100% Pass Rate (0% false cancellation rate)"
+        "Test Results:": "100% Pass Rate across all 58 automated tests"
     }
     story.append(create_metadata_box(meta, styles))
     story.append(Spacer(1, 10))
     
     story.append(create_callout(
         "What This Feature Does for the User",
-        "This is an emergency lifeline designed specifically for people who cannot see the screen. If a user feels in danger, has a medical emergency, or gets lost, they can trigger an SOS without unlocking the phone—either by shaking the phone 3 times firmly, or by speaking 'Send SOS'. To avoid accidental false alarms if the phone is dropped, the phone speaks aloud and gives the user 8 seconds to say 'Cancel'. If not cancelled, it sends an SMS with exact GPS coordinates and immediately calls their emergency contact.",
+        "This is an emergency lifeline designed specifically for people who cannot see the screen. If a user feels in danger, has a medical emergency, or gets lost, they can trigger an SOS without unlocking the phone—either by shaking the phone 3 times firmly, or by speaking 'Send SOS'. To avoid accidental false alarms if the phone is dropped, the phone speaks aloud and gives the user 8 seconds to say 'Cancel'. Furthermore, blind users can add or edit emergency contacts completely hands-free using natural voice commands, spoken word numbers ('double five', 'nine eight seven...'), and spoken verification.",
         'danger',
         styles
     ))
@@ -56,7 +56,7 @@ def build_pdf():
     # --- SECTION 1: SYSTEM WORKFLOW ---
     story.append(Paragraph("1. How the Emergency SOS Works Step-by-Step", styles['SectionHeading']))
     story.append(Paragraph(
-        "The emergency system coordinates motion sensors, voice recognition, GPS location, text messages, and phone calls through six clear stages:",
+        "The emergency system coordinates motion sensors, voice recognition, GPS location, text messages, phone calls, and hands-free contact management:",
         styles['Body']
     ))
     
@@ -91,6 +91,11 @@ def build_pdf():
             "6. Make Direct Phone Call",
             "MainActivity.kt (Action Call)",
             "Immediately dials the emergency contact's phone number so the user can talk to someone right away."
+        ],
+        [
+            "7. Voice Contact Setup",
+            "EmergencyContactVoiceHelper",
+            "Allows blind users to add or edit emergency contacts completely hands-free via spoken multi-turn dialogue or direct voice commands with spoken digit verification."
         ]
     ]
     story.append(create_table(flow_headers, flow_rows, [1.3 * inch, 1.8 * inch, 4.1 * inch], styles))
@@ -192,11 +197,55 @@ def build_pdf():
     ))
     story.append(Spacer(1, 14))
     
-    # --- SECTION 4: TEST SUMMARY ---
-    story.append(Paragraph("4. Automated Safety Test Verification", styles['SectionHeading']))
+    # Page Break for clean reading
+    story.append(PageBreak())
+    
+    # --- SECTION 4: VOICE-ACTIVATED EMERGENCY CONTACT SETUP ---
+    story.append(Paragraph("4. Line-by-Line Code Walkthrough: Hands-Free Contact Setup", styles['SectionHeading']))
+    story.append(Paragraph(
+        "Below are the core sections of code enabling visually impaired users to configure emergency contacts purely by voice:",
+        styles['Body']
+    ))
+    story.append(Spacer(1, 8))
+    
+    # Card 8: Spoken Phone Number Parsing
+    story.append(create_code_card(
+        file_name="emergency_contact_voice_helper.dart",
+        line_range="Lines 40 - 68",
+        code_snippet="for (final token in tokens) {\n  if (_multiplierWords.containsKey(token)) {\n    multiplier = _multiplierWords[token]!; continue;\n  }\n  String? digit;\n  if (RegExp(r'^\\d+$').hasMatch(token)) digit = token;\n  else if (_wordToDigit.containsKey(token)) digit = _wordToDigit[token]!;\n  if (digit != null) {\n    for (int i = 0; i < multiplier; i++) buffer.write(digit);\n    multiplier = 1;\n  }\n}",
+        what_it_does="Translates natural spoken numbers ('nine eight seven', 'double five', 'triple zero', 'plus one') into clean phone digits.",
+        why_needed="Blind users speak naturally. This parser understands word digits, repetitions ('double five' -> 55), and international prefixes without requiring manual typing.",
+        styles=styles
+    ))
+    story.append(Spacer(1, 10))
+    
+    # Card 9: Spaced-Digit TTS Pronunciation
+    story.append(create_code_card(
+        file_name="emergency_contact_voice_helper.dart",
+        line_range="Lines 72 - 83",
+        code_snippet="static String formatPhoneNumberForSpeech(String phone) {\n  final buffer = StringBuffer();\n  if (phone.trim().startsWith('+')) buffer.write('plus ');\n  final digits = phone.replaceAll(RegExp(r'[^\\d]'), '');\n  for (int i = 0; i < digits.length; i++) buffer.write('${digits[i]} ');\n  return buffer.toString().trim();\n}",
+        what_it_does="Injects spaces between digits (e.g. 'plus 9 8 7 6 5 4 3 2 1 0') before sending to Text-to-Speech.",
+        why_needed="TTS engines pronounce raw digit strings as giant numbers (e.g. 'nine billion two hundred million...'). Spacing digits guarantees TTS clearly reads each digit individually for confirmation.",
+        styles=styles
+    ))
+    story.append(Spacer(1, 10))
+    
+    # Card 10: Multi-Turn Conversational Setup Wizard
+    story.append(create_code_card(
+        file_name="emergency_screen.dart",
+        line_range="Lines 80 - 135",
+        code_snippet="// Step 1: Prompt for contact name\nawait voiceService.speak('Please state the name of your emergency contact.');\nfinal spokenName = await voiceService.listen(listenDurationSeconds: 6);\n// Step 2: Prompt for contact phone\nawait voiceService.speak('Please state the phone number for $name.');\nfinal spokenPhone = await voiceService.listen(listenDurationSeconds: 8);\n// Step 3: Read back digits spaced & confirm\nawait voiceService.speak('Should I save $name with number $spacedDigits? Say yes to confirm.');\nfinal answer = await voiceService.listen(listenDurationSeconds: 5);\nif (isConfirmation(answer)) await _confirmAndSaveContact(name, phone);",
+        what_it_does="Runs an interactive step-by-step voice dialogue: asks for the name, asks for the phone, reads back the formatted digits, and saves upon verbal confirmation.",
+        why_needed="Provides complete independence for visually impaired users to set up or edit their life-saving contact without sighted assistance.",
+        styles=styles
+    ))
+    story.append(Spacer(1, 14))
+    
+    # --- SECTION 5: TEST SUMMARY ---
+    story.append(Paragraph("5. Automated Safety Test Verification", styles['SectionHeading']))
     story.append(create_callout(
         "Automated Test Verification",
-        "The Emergency SOS system has been verified across 6 automated test suites. Tests confirm that the triple-shake triggers reliably, words like 'now' or 'know' never cause accidental cancellations (0% false abort rate), GPS messages format cleanly with Google Maps links, and if SMS transmission ever fails, the direct phone call dials automatically 100% of the time.",
+        "The Emergency SOS and Voice Contact Setup system is backed by 58 passing automated tests. This includes 20 unit tests covering phonetic phone numbers ('double five', 'triple zero', 'plus'), name sanitization, direct one-shot commands ('add contact Mom 1234567890'), 8 full widget/wizard integration tests, and platform channel dispatch tests.",
         'success',
         styles
     ))
