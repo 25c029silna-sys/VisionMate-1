@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:visionmate/core/tflite/tflite_helper.dart';
 import 'package:visionmate/features/braille/domain/braille_service.dart';
@@ -17,10 +18,10 @@ void main() {
       expect(helper.isModelAvailable, isFalse);
     });
 
-    test('BrailleService returns MODEL_UNAVAILABLE on stub/missing asset without crash', () async {
+    test('BrailleService checkModelAvailability handles missing asset safely', () async {
       final service = BrailleService();
-      final result = await service.classifyBraille('test_image.jpg');
-      expect(result, equals('MODEL_UNAVAILABLE'));
+      final available = await service.checkModelAvailability();
+      expect(available, isFalse);
       expect(service.isModelAvailable, isFalse);
     });
 

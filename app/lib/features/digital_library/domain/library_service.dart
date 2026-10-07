@@ -27,8 +27,7 @@ class LibraryService {
         ocrService = ocrService ?? OcrService();
 
   Future<bool> checkModelAvailability() async {
-    final interpreter = await _tfliteHelper.loadModel('assets/models/minilm.tflite');
-    _isModelAvailable = interpreter != null;
+    _isModelAvailable = await embedder.initModel();
     return _isModelAvailable;
   }
 
@@ -49,9 +48,24 @@ class LibraryService {
     return similarity.clamp(0.0, 1.0);
   }
 
+  /// Calibrates raw cosine similarity (-1.0 to 1.0) into intuitive relevance percentage (0.0 to 1.0).
+  /// In semantic Transformers, cosine similarities for relevant topics naturally fall in 0.15 - 0.50.
+  static double calibrateRelevanceScore(double cosineSim, {bool hasExactKeyword = false}) {
+    if (cosineSim >= 0.999) return 1.0;
+    if (hasExactKeyword) {
+      return max(0.88, (cosineSim * 1.5).clamp(0.88, 0.99));
+    }
+    if (cosineSim <= 0.05) return 0.0;
+    final normalized = ((cosineSim - 0.05) / 0.45).clamp(0.0, 1.0);
+    return (0.35 + 0.65 * normalized).clamp(0.0, 1.0);
+  }
+
   /// Indexes a new document by creating SQLite record and 384d vector embedding.
   /// Emphasizes title tokens to ensure prominent title match retrieval.
   Future<int> addAndIndexDocument(String title, String text, {String sourceType = 'user_note'}) async {
+    if (!embedder.isNeuralModelReady) {
+      await checkModelAvailability();
+    }
     final docId = await embeddingStore.service.saveDocument({
       'title': title,
       'text': text,
@@ -107,13 +121,17 @@ class LibraryService {
     String queryText, {
     int topK = 10,
   }) async {
+    if (!embedder.isNeuralModelReady) {
+      await checkModelAvailability();
+    }
     final queryVector = embedder.generateEmbedding(queryText);
-    return rankDocuments(queryVector, topK: topK);
+    return rankDocuments(queryVector, queryText: queryText, topK: topK);
   }
 
   /// Ranks documents by computing cosine similarity against ALL stored vector embeddings.
   Future<List<Map<String, dynamic>>> rankDocuments(
     List<double> queryEmbedding, {
+    String? queryText,
     int topK = 10,
   }) async {
     final rows = await embeddingStore.fetchEmbeddings();
@@ -125,17 +143,34 @@ class LibraryService {
       // Test environment or uninitialized DB fallback
     }
 
+    final queryTokens = queryText != null
+        ? queryText
+            .toLowerCase()
+            .replaceAll(RegExp(r'[^\w\s]'), '')
+            .split(RegExp(r'\s+'))
+            .where((w) => w.length >= 3)
+            .toSet()
+        : <String>{};
+
     final scored = rows.map((row) {
       final docId = row['document_id'] as int;
       final doc = docMap[docId] ?? {'title': 'Document #$docId', 'text': ''};
       final vector = List<double>.from(jsonDecode(row['vector']) as List<dynamic>);
-      final score = _cosineSimilarity(queryEmbedding, vector);
+      final rawScore = _cosineSimilarity(queryEmbedding, vector);
+
+      final docContent = '${doc['title']} ${doc['text']}'.toLowerCase();
+      final hasExactKeyword = queryTokens.isNotEmpty &&
+          queryTokens.any((token) => docContent.contains(token));
+
+      final displayScore = calibrateRelevanceScore(rawScore, hasExactKeyword: hasExactKeyword);
+
       return {
         'document_id': docId,
         'title': doc['title'],
         'text': doc['text'],
         'source_type': doc['source_type'],
-        'score': score,
+        'score': displayScore,
+        'raw_score': rawScore,
       };
     }).toList();
 

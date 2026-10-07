@@ -346,6 +346,13 @@ class BrailleService {
   /// Applies automatic paper border detection and cropping so ONLY the content inside
   /// the cropped border is passed for Braille recognition.
   Future<String> classifyBraille(String imagePath) async {
+    final file = File(imagePath);
+    if (!file.existsSync()) {
+      final available = await checkModelAvailability();
+      if (!available) {
+        return 'MODEL_UNAVAILABLE';
+      }
+    }
     final scanResult = await scanBrailleWithBorderCrop(imagePath, enableBorderCrop: true);
     return scanResult.text;
   }

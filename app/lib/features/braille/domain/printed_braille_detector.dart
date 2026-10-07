@@ -132,6 +132,7 @@ class PrintedBrailleDetector {
     'braille', 'test', 'hello', 'world', 'vision', 'visionmate', 'name', 'time',
     'cell', 'cells', 'plant', 'plants', 'animal', 'animals', 'lack', 'lacks', 'life',
     'every', 'unit', 'wall', 'walls', 'dna', 'produce', 'energy', 'basic', 'material',
+    'cab', 'bat', 'car', 'box', 'cup', 'bag', 'hat', 'bed', 'red', 'pig', 'fox',
   };
 
   /// Evaluates English linguistic plausibility and character confidence to select optimal orientation.
@@ -381,9 +382,9 @@ class PrintedBrailleDetector {
       }
     }
 
-    // Discard short lines (<= 6 chars) that contain no valid word and are just random non-word fragments (e.g. "acc '", "aa", "c")
     final tokens = trimmed.toLowerCase().split(RegExp(r'\s+')).map((w) => w.replaceAll(RegExp(r'[^a-z0-9]'), '')).where((w) => w.isNotEmpty).toList();
-    if (trimmed.length <= 6 && tokens.isNotEmpty) {
+    // Discard short lines (<= 6 chars) that contain noise punctuation and non-words (e.g. "acc '", "aa '", "c '")
+    if (trimmed.length <= 6 && (trimmed.contains("'") || trimmed.contains('"') || trimmed.contains('`') || trimmed.contains('?') || trimmed.contains('/'))) {
       final hasValidWord = tokens.any((t) => commonWords.contains(t) || t == 'a' || t == 'i' || RegExp(r'^[0-9]+$').hasMatch(t));
       if (!hasValidWord) return true;
     }
@@ -863,8 +864,8 @@ class PrintedBrailleDetector {
     for (final dot in sortedByY) {
       bool placed = false;
       for (final line in rawLines) {
-        final lineAvgY = line.map((d) => d.y).reduce((a, b) => a + b) / line.length;
-        if ((dot.y - lineAvgY).abs() <= dy * 1.35) {
+        final lineMinY = line.map((d) => d.y).reduce(min);
+        if ((dot.y - lineMinY) <= dy * 2.35) {
           line.add(dot);
           placed = true;
           break;

@@ -83,7 +83,40 @@ class BrailleTextRefiner {
     // Missed capital E + v in "Every": e.g. "/j-ery", "/?-ery", "/j- ery"
     text = text.replaceAll(RegExp(r'[/?\-]+[j\?\-]*\s*ery\b', caseSensitive: false), 'Every');
 
-    // 7. Process lines, filter noise, and perform word segmentation on concatenated tokens
+    // 7. Expand Grade 2 Braille short-forms in natural text contexts (e.g. cd -> could, fr -> friends)
+    // Avoid aggressive expansion if input represents raw uncontracted notation with non-standard abbreviations (chn, rm)
+    if (!text.contains(RegExp(r'\b(chn|rm)\b', caseSensitive: false))) {
+      const shortForms = {
+        'cd': 'could',
+        'wd': 'would',
+        'sd': 'should',
+        'fr': 'friends',
+        'td': 'today',
+        'tm': 'tomorrow',
+        'tn': 'tonight',
+        'ab': 'about',
+        'ac': 'across',
+        'af': 'after',
+        'ag': 'again',
+        'al': 'also',
+        'alm': 'almost',
+        'alr': 'already',
+        'alt': 'altogether',
+        'lr': 'letter',
+        'll': 'little',
+        'gd': 'good',
+        'grt': 'great',
+        'hm': 'him',
+        'hms': 'himself',
+        'yr': 'your',
+      };
+      text = text.replaceAllMapped(
+        RegExp(r'\b(cd|wd|sd|fr|td|tm|tn|ab|ac|af|ag|al|alm|alr|alt|lr|ll|gd|grt|hm|hms|yr)\b', caseSensitive: false),
+        (m) => shortForms[m.group(1)!.toLowerCase()] ?? m.group(1)!,
+      );
+    }
+
+    // 8. Process lines, filter noise, and perform word segmentation on concatenated tokens
     final lines = text.split('\n');
     final processedLines = <String>[];
 
@@ -106,9 +139,9 @@ class BrailleTextRefiner {
         }
       }
 
-      // Discard short lines (<= 6 chars) that contain no valid word (e.g. "acc '", "aa", "c")
+      // Discard short lines (<= 6 chars) that contain noise punctuation and non-words (e.g. "acc '", "aa '", "c '")
       final lineTokens = line.toLowerCase().split(RegExp(r'\s+')).map((w) => w.replaceAll(RegExp(r'[^a-z0-9]'), '')).where((w) => w.isNotEmpty).toList();
-      if (line.length <= 6 && lineTokens.isNotEmpty) {
+      if (line.length <= 6 && (line.contains("'") || line.contains('"') || line.contains('`') || line.contains('?') || line.contains('/'))) {
         final hasValidWord = lineTokens.any((t) => _dictionary.contains(t) || t == 'a' || t == 'i' || RegExp(r'^[0-9]+$').hasMatch(t));
         if (!hasValidWord) continue;
       }
@@ -268,6 +301,7 @@ class BrailleTextRefiner {
     'energy', 'plant', 'plants', 'animal', 'animals', 'wall', 'walls',
     'chloroplast', 'chloroplasts', 'lack', 'lacks', 'lacking', 'organ', 'organs',
     'tissue', 'tissues', 'student', 'students', 'happy', 'pen', 'sun', 'sky', 'cat',
-    'vision', 'mate', 'visionmate', 'braille', 'reading', 'reader',
+    'vision', 'mate', 'visionmate', 'braille', 'reading', 'reader', 'cab', 'bat', 'grade',
+    'swami', 'could', 'friends', 'friend', 'would', 'should', 'school',
   };
 }

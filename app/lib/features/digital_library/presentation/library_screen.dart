@@ -39,6 +39,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _initializeLibrary() async {
+    libraryService.checkModelAvailability();
     await _seedSampleDocumentsIfEmpty();
     await _loadAvailableBooks();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -559,8 +560,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
       status = 'Search complete for "$query". Found ${filteredResults.length} relevant matches.';
     });
 
-    if (results.isNotEmpty) {
-      final topResult = results.first;
+    if (filteredResults.isNotEmpty) {
+      final topResult = filteredResults.first;
       final title = topResult['title'] ?? 'Matching Document';
       final text = topResult['text'] ?? '';
       await voiceService.speak('Found match: $title. $text', awaitCompletion: true);

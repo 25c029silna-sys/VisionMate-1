@@ -46,6 +46,7 @@ flutter:
     - assets/models/yolov8_braille.tflite
     - assets/models/yolov8n.tflite
     - assets/models/detect.tflite
-    # - assets/models/minilm.tflite
+    - assets/models/minilm.tflite
+    - assets/vocab/vocab.txt
     - assets/labels/braille_labels.txt
     - assets/labels/yolo_labels.txt

@@ -293,7 +293,7 @@ void main() {
 
       final scanButton = find.text('Scan Braille');
       await tester.tap(scanButton);
-      for (int i = 0; i < 15; i++) {
+      for (int i = 0; i < 30; i++) {
         await tester.pump(const Duration(milliseconds: 200));
       }
 

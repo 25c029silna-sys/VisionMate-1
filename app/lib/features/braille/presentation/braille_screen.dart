@@ -295,7 +295,11 @@ class _BrailleScreenState extends State<BrailleScreen> {
       try {
         final storage = Provider.of<StorageService>(context, listen: false);
         final libraryService = LibraryService(EmbeddingStore(storage));
-        await libraryService.addAndIndexDocument(docTitle, _extractedText, sourceType: 'braille_pdf');
+        // Index asynchronously in background so screen dismissal is immediate
+        libraryService.addAndIndexDocument(docTitle, _extractedText, sourceType: 'braille_pdf').catchError((storageErr) {
+          debugPrint('BrailleScreen: Storage indexing note: $storageErr');
+          return 0;
+        });
       } catch (storageErr) {
         debugPrint('BrailleScreen: Storage indexing note: $storageErr');
       }
