@@ -830,7 +830,7 @@ class PageBorderDetector {
     final dotRadius = max(3, (width * 0.007).round());
     final dotSpacingX = (width * 0.024).round();
     final dotSpacingY = (width * 0.024).round();
-    final cellSpacingX = (width * 0.075).round();
+    final cellSpacingX = (dotSpacingX * 2.35).round();
 
     int startX = paperX1 + (width * 0.08).round();
     int startY = paperY1 + (height * 0.12).round();

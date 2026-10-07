@@ -330,11 +330,9 @@ class YoloBrailleDecoder {
 
       for (final d in line) {
         // Dynamic Spacing Calibration:
-        // Do NOT emit an empty space ' ' unless the horizontal gap between two consecutive 2x3 cells
-        // is strictly greater than 1.6 times the inter-cell pitch (cx).
-        // Any gap smaller than this MUST be treated as contiguous characters within the same word.
-        final double cx = medianW * 1.20;
-        final bool isSpace = lastCx > 0 && (d.cx - lastCx) > (1.6 * cx);
+        // Emit an empty space ' ' when the horizontal gap between two consecutive 2x3 cells
+        // is at least 1.55 times the cell width.
+        final bool isSpace = lastCx > 0 && (d.cx - lastCx) >= (1.55 * medianW);
         if (isSpace) {
           buffer.write(' ');
           isNumberMode = false;

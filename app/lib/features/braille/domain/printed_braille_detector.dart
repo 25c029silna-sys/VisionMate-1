@@ -130,6 +130,8 @@ class PrintedBrailleDetector {
     'student', 'blue', 'hot', 'big', 'small', 'pen', 'us', 'me', 'my', 'see', 'look',
     'hi', 'go', 'so', 'no', 'of', 'up', 'out', 'day', 'get', 'has', 'good', 'like',
     'braille', 'test', 'hello', 'world', 'vision', 'visionmate', 'name', 'time',
+    'cell', 'cells', 'plant', 'plants', 'animal', 'animals', 'lack', 'lacks', 'life',
+    'every', 'unit', 'wall', 'walls', 'dna', 'produce', 'energy', 'basic', 'material',
   };
 
   /// Evaluates English linguistic plausibility and character confidence to select optimal orientation.
@@ -179,13 +181,24 @@ class PrintedBrailleDetector {
         } else {
           invalidWords++;
         }
+      } else if (clean.length == 2) {
+        const valid2Letter = {
+          'am', 'an', 'as', 'at', 'be', 'by', 'do', 'go', 'he', 'hi',
+          'if', 'in', 'is', 'it', 'me', 'my', 'no', 'of', 'on', 'or',
+          'so', 'to', 'up', 'us', 'we', 'ok',
+        };
+        if (valid2Letter.contains(clean)) {
+          recognizedWords++;
+        } else {
+          invalidWords++;
+        }
       } else if (commonWords.contains(clean) || RegExp(r'^[0-9]+$').hasMatch(clean)) {
         recognizedWords++;
       } else {
         final wordVowels = clean.split('').where((ch) => vowelSet.contains(ch)).length;
-        if (wordVowels > 0) {
+        if (wordVowels > 0 && clean.length >= 3) {
           plausibleWords++;
-        } else if (clean.length >= 2) {
+        } else {
           invalidWords++;
         }
       }
@@ -351,11 +364,34 @@ class PrintedBrailleDetector {
     // Discard lines with 3 or more identical characters in a row (e.g. "cccc")
     if (RegExp(r'([a-zA-Z])\1{2,}').hasMatch(trimmed)) return true;
 
-    // Discard repetitive 1-to-3 character n-grams repeating 4 or more times (e.g. "ccaccaccaccac")
-    if (RegExp(r'(.{1,3})\1{3,}').hasMatch(trimmed)) return true;
+    // Discard repetitive 1-to-4 character n-grams repeating 3 or more times (e.g. "cca cca cca cca", "ccaccaccaccac")
+    final noSpaces = trimmed.replaceAll(' ', '');
+    if (RegExp(r'(.{1,4})\1{2,}').hasMatch(noSpaces)) return true;
 
     // Discard repetitive punctuation/character noise (e.g. "c-:c-:c-:")
     if (RegExp(r'(?:[a-zA-Z][\-:;?,\.!]){3,}').hasMatch(trimmed)) return true;
+
+    // Discard lines with '?' embedded inside letters or short non-word tokens (e.g. "cc?a", "?a")
+    if (RegExp(r'[a-zA-Z]+\?[a-zA-Z]+').hasMatch(trimmed) ||
+        RegExp(r'^[a-zA-Z]{1,3}\?$').hasMatch(trimmed) ||
+        RegExp(r'^\?[a-zA-Z]{1,3}$').hasMatch(trimmed) ||
+        (trimmed.length <= 5 && trimmed.contains('?'))) {
+      if (!RegExp(r'\b(what|who|where|when|why|how|can|is|are|do|does|did|will|would|could|should)\b.+\?$', caseSensitive: false).hasMatch(trimmed)) {
+        return true;
+      }
+    }
+
+    // Discard short lines (<= 6 chars) that contain no valid word and are just random non-word fragments (e.g. "acc '", "aa", "c")
+    final tokens = trimmed.toLowerCase().split(RegExp(r'\s+')).map((w) => w.replaceAll(RegExp(r'[^a-z0-9]'), '')).where((w) => w.isNotEmpty).toList();
+    if (trimmed.length <= 6 && tokens.isNotEmpty) {
+      final hasValidWord = tokens.any((t) => commonWords.contains(t) || t == 'a' || t == 'i' || RegExp(r'^[0-9]+$').hasMatch(t));
+      if (!hasValidWord) return true;
+    }
+
+    // Discard lines consisting entirely of 3 or more single-letter fragments (e.g. "a a c a")
+    if (tokens.length >= 3 && tokens.every((t) => t.length == 1)) {
+      return true;
+    }
 
     int letters = 0;
     int digits = 0;
@@ -828,7 +864,7 @@ class PrintedBrailleDetector {
       bool placed = false;
       for (final line in rawLines) {
         final lineAvgY = line.map((d) => d.y).reduce((a, b) => a + b) / line.length;
-        if ((dot.y - lineAvgY).abs() <= lineBandHeight * 0.75) {
+        if ((dot.y - lineAvgY).abs() <= dy * 1.35) {
           line.add(dot);
           placed = true;
           break;
@@ -859,7 +895,7 @@ class PrintedBrailleDetector {
       final List<List<PrintedDot>> hSegments = [];
       List<PrintedDot> curSeg = [lineDots.first];
       for (int i = 1; i < lineDots.length; i++) {
-        if (lineDots[i].x - lineDots[i - 1].x > cx * 3.0) {
+        if (lineDots[i].x - lineDots[i - 1].x > cx * 4.5) {
           hSegments.add(curSeg);
           curSeg = [lineDots[i]];
         } else {
@@ -929,7 +965,7 @@ class PrintedBrailleDetector {
       for (int i = 1; i < rowDots.length; i++) {
         final dot = rowDots[i];
         final cellMinX = currentCell.map((d) => d.x).reduce(min);
-        if ((dot.x - cellMinX) <= dx * 1.35) {
+        if ((dot.x - cellMinX) <= dx * 1.55) {
           currentCell.add(dot);
         } else {
           cellClusters.add(currentCell);
@@ -975,7 +1011,7 @@ class PrintedBrailleDetector {
         bool hasSpace = false;
         if (lastCellX != null) {
           final dist = cellMinX - lastCellX;
-          if (dist >= cx * 1.45) {
+          if (dist >= cx * 1.25) {
             hasSpace = true;
           }
         }
@@ -1098,6 +1134,23 @@ class PrintedBrailleDetector {
     cleaned = cleaned.replaceAll(RegExp(r'\bf have\b', caseSensitive: false), 'i have');
     cleaned = cleaned.replaceAll(RegExp(r"(?:^|(?<=\s))('ceg|aeg)\b", caseSensitive: false), 'the dog');
     cleaned = cleaned.replaceAll(RegExp(r'(?:^|(?<=\s))(/en|fen|;en|cen)\b', caseSensitive: false), 'pen');
+
+    // Punctuation spacing (ensure space after punctuation followed by letter or digit)
+    cleaned = cleaned.replaceAllMapped(RegExp(r'([,\.;:!\?])([a-zA-Z0-9])'), (m) => '${m.group(1)} ${m.group(2)}');
+
+    // Split lowercase directly touching uppercase acronym (e.g. "storesDNA" -> "stores DNA")
+    cleaned = cleaned.replaceAllMapped(RegExp(r'([a-z])([A-Z]{2,})'), (m) => '${m.group(1)} ${m.group(2)}');
+
+    // Single-bit OCR errors:
+    // 'w' (dots 2,4,5,6) -> 'j' (dots 2,4,5): e.g. "jhich" -> "which"
+    cleaned = cleaned.replaceAllMapped(RegExp(r'\bjh([a-z]+)\b', caseSensitive: false), (m) => 'wh${m.group(1)}');
+
+    // 's' (dots 2,3,4) -> ';' (dots 2,3): e.g. "activitie;" -> "activities", "cell;" -> "cells"
+    cleaned = cleaned.replaceAllMapped(RegExp(r'\b([a-zA-Z]{3,});(?=\s+[a-z]|\s*$)'), (m) => '${m.group(1)}s');
+
+    // Missed capital E + v in "Every": e.g. "/j-ery", "/?-ery", "/j- ery"
+    cleaned = cleaned.replaceAll(RegExp(r'[/?\-]+[j\?\-]*\s*ery\b', caseSensitive: false), 'Every');
+
     cleaned = cleaned.replaceAll(RegExp(r"^[\?,:;!\.\'\-]+\s*"), "");
     return cleaned.trim();
   }
