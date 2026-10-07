@@ -107,9 +107,9 @@ void main() {
     });
 
     // =========================================================================
-    // 2. NO REACTIVATION ON SILENCE / NULL SPEECH
+    // 2. AUTOMATIC REACTIVATION ON SILENCE / TIMER EXPIRATION
     // =========================================================================
-    testWidgets('HomeScreen does NOT reactivate voice recognition when speech returns null/silence', (tester) async {
+    testWidgets('HomeScreen DOES reactivate voice recognition automatically when speech returns null/silence (fails to catch a word during timer)', (tester) async {
       int listenCount = 0;
       when(() => mockVoiceService.listen()).thenAnswer((_) async {
         listenCount++;
@@ -127,22 +127,48 @@ void main() {
       // Initial voice activation
       expect(listenCount, equals(1));
 
-      // Advance clock
+      // Advance clock past retry timer (500ms)
       await tester.pump(const Duration(milliseconds: 600));
 
-      // Must NOT have reactivated on silence
-      expect(listenCount, equals(1));
+      // Must have reactivated automatically after timer expired without catching a word
+      expect(listenCount, equals(2));
 
-      // Verify status text indicates no input detected without auto-relistening
+      // Verify status text indicates reactivation
       expect(find.textContaining('No voice input detected'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
     });
 
+    testWidgets('Tapping voice button during reactivation cooldown pauses listening', (tester) async {
+      int listenCount = 0;
+      when(() => mockVoiceService.listen()).thenAnswer((_) async {
+        listenCount++;
+        return null; // Silence/timeout
+      });
+
+      await tester.pumpWidget(wrapWithProviders(const HomeScreen()));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(listenCount, equals(1));
+
+      // Tap microphone button to cancel retry before 500ms elapsed
+      await tester.tap(find.text('TAP TO SPEAK COMMAND'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Advance clock past previous 500ms window
+      await tester.pump(const Duration(milliseconds: 600));
+
+      // Should remain at 1 because user explicitly paused/cancelled
+      expect(listenCount, equals(1));
+      expect(find.textContaining('Voice listening paused'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
     // =========================================================================
-    // 3. ELIMINATION OF CONTINUOUS RE-LISTENING ON UNRECOGNIZED COMMAND
+    // 3. REACTIVATION ON UNRECOGNIZED COMMAND (WORD NOT IN GUIDE)
     // =========================================================================
-    testWidgets('HomeScreen does NOT continuously reactivate voice recognition when unrecognized voice command is gathered', (tester) async {
+    testWidgets('HomeScreen DOES reactivate voice recognition when word not in the guide is uttered', (tester) async {
       int listenCount = 0;
       when(() => mockVoiceService.listen()).thenAnswer((_) async {
         listenCount++;
@@ -163,13 +189,21 @@ void main() {
       await tester.pumpWidget(wrapWithProviders(const HomeScreen()));
       await tester.pump(const Duration(milliseconds: 200));
 
-      // Initial voice activation only; does NOT trigger continuous mic loop on unrecognized command
+      // Initial voice activation
       expect(listenCount, equals(1));
 
       // Verify error announcement was spoken
       verify(() => mockVoiceService.speak(
             'Command not recognized. Tap the voice button, say VisionMate, or say Guide for help.',
+            awaitCompletion: true,
           )).called(1);
+
+      // Advance clock past retry timer (500ms)
+      await tester.pump(const Duration(milliseconds: 600));
+
+      // Must have reactivated automatically after unrecognized command
+      expect(listenCount, equals(2));
+      expect(find.textContaining('No voice input detected'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
     });

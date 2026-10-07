@@ -29,7 +29,6 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   bool isCountingDown = false;
   int countdownSeconds = 8;
   Timer? _countdownTimer;
-  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -38,7 +37,10 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     storageService = Provider.of<StorageService>(context, listen: false);
     _loadTrustedContact();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await voiceService.speak('Emergency SOS activated. Say SOS or tap the button to call for help.');
+      await voiceService.speak(
+        'Emergency SOS activated. Say SOS or tap the button to call for help.',
+        awaitCompletion: true,
+      );
       if (mounted) {
         await _handleVoiceCommand();
       }
@@ -48,7 +50,6 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
   @override
   void dispose() {
     _countdownTimer?.cancel();
-    _retryTimer?.cancel();
     super.dispose();
   }
 
@@ -69,7 +70,6 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
       _startVoiceContactSetup(initialUtterance: initialUtterance);
 
   Future<void> _handleVoiceCommand() async {
-    _retryTimer?.cancel();
     if (isCountingDown) {
       await _cancelSos();
       return;
@@ -80,6 +80,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
       if (mounted) {
         setState(() {
           isListening = false;
+          status = 'Voice listening paused. Tap microphone button to speak.';
         });
       }
       return;
@@ -101,7 +102,7 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     if (command == null || command.trim().isEmpty) {
       if (mounted && !isCountingDown) {
         setState(() {
-          status = 'Tap microphone button to speak a command.';
+          status = 'Voice command ready. Tap microphone or say SOS.';
         });
       }
       return;
@@ -118,10 +119,13 @@ class _EmergencyScreenState extends State<EmergencyScreen> {
     } else if (lower.contains('help') || lower.contains('guide')) {
       await voiceService.speak('Available commands: say SOS to trigger emergency alert, Contact to add or edit trusted contact with voice, or Back to return home.');
     } else {
-      await voiceService.speak('Command not recognized. Say SOS, Contact, or Back.');
+      await voiceService.speak(
+        'Command not recognized. Say SOS, Contact, or Back.',
+        awaitCompletion: true,
+      );
       if (mounted && !isCountingDown) {
         setState(() {
-          status = 'Tap microphone button to speak a command.';
+          status = 'Command not recognized. Tap microphone to speak.';
         });
       }
     }

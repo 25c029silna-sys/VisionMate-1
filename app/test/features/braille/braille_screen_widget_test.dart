@@ -228,12 +228,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 500));
 
       verifyInOrder([
-        () => mockVoiceService.speak('Braille recognition complete. Recognized text: Recognized Braille Text Sample'),
-        () => mockVoiceService.speak('Say again to scan another page, say save PDF to export, or say home to return to the main menu.'),
-        () => mockVoiceService.listen(
-          listenDurationSeconds: any(named: 'listenDurationSeconds'),
-          pauseDurationSeconds: any(named: 'pauseDurationSeconds'),
+        () => mockVoiceService.speak(
+          'Braille recognition complete. Recognized text: Recognized Braille Text Sample',
+          awaitCompletion: any(named: 'awaitCompletion'),
         ),
+        () => mockVoiceService.speak(
+          'Please speak the name for your PDF document, or say cancel.',
+        ),
+        () => mockVoiceService.listen(),
       ]);
     });
 
@@ -259,11 +261,8 @@ void main() {
       when(() => mockVoiceService.listen(
         listenDurationSeconds: any(named: 'listenDurationSeconds'),
         pauseDurationSeconds: any(named: 'pauseDurationSeconds'),
-      )).thenAnswer((invocation) async {
-        final dur = invocation.namedArguments[#listenDurationSeconds] as int?;
-        if (dur == 15) return 'save pdf as biology notes';
-        return null;
-      });
+      )).thenAnswer((_) async => 'save pdf as biology notes');
+      when(() => mockVoiceService.listen()).thenAnswer((_) async => 'save pdf as biology notes');
 
       await tester.pumpWidget(
         MultiProvider(

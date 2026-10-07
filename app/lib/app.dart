@@ -116,6 +116,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   late final CommandRouter router;
   String status = 'Voice ready. Tap microphone or shake for SOS.';
   bool isListening = false;
+  bool _isCurrentRoute = true;
   Timer? _retryTimer;
 
   @override
@@ -126,11 +127,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
     // Auto-activate voice input at app startup
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || !_isCurrentRoute) return;
       await voiceService.speak(
         'Welcome to VisionMate. Listening for your command...',
         awaitCompletion: true,
       );
-      if (mounted) {
+      if (mounted && _isCurrentRoute) {
         await _activateVoiceRecognition();
       }
     });
@@ -147,6 +149,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   @override
   void dispose() {
+    _isCurrentRoute = false;
     _retryTimer?.cancel();
     appRouteObserver.unsubscribe(this);
     super.dispose();
@@ -155,6 +158,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   @override
   void didPushNext() {
     // Stop listening when navigating to a child module
+    _isCurrentRoute = false;
     _retryTimer?.cancel();
     if (isListening) {
       voiceService.stopListening();
@@ -170,20 +174,23 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   @override
   void didPopNext() {
     // Automatically reactivate voice input when returning to the HomeScreen
+    _isCurrentRoute = true;
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
+      if (!mounted || !_isCurrentRoute) return;
       await voiceService.speak(
         'Returned to main menu. Listening for your command...',
         awaitCompletion: true,
       );
-      if (mounted) {
+      if (mounted && _isCurrentRoute) {
         await _activateVoiceRecognition();
       }
     });
   }
 
   Future<void> _navigateToModule(String route) async {
+    _isCurrentRoute = false;
+    _retryTimer?.cancel();
     if (isListening) {
       await voiceService.stopListening();
       if (mounted) {
@@ -199,6 +206,18 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   }
 
   Future<void> _activateVoiceRecognition() async {
+    if (!_isCurrentRoute) return;
+
+    if (_retryTimer?.isActive == true) {
+      _retryTimer?.cancel();
+      if (mounted) {
+        setState(() {
+          isListening = false;
+          status = 'Voice listening paused. Tap microphone button to speak.';
+        });
+      }
+      return;
+    }
     _retryTimer?.cancel();
     if (isListening) {
       await voiceService.stopListening();
@@ -220,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
     final command = await voiceService.listen();
 
-    if (!mounted) return;
+    if (!mounted || !_isCurrentRoute) return;
 
     setState(() {
       isListening = false;
@@ -236,7 +255,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       if (CommandRouter.containsWakeWord(text) &&
           CommandRouter.extractCommandAfterWakeWord(text).isEmpty) {
         await voiceService.speak('I am listening. State a feature name like Braille, OCR, Library, Scene, or SOS.');
-        if (mounted) {
+        if (mounted && _isCurrentRoute) {
           await _activateVoiceRecognition();
         }
         return;
@@ -249,22 +268,39 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           await VoiceGuideService(voiceService).readGuideAloud();
         } else {
           await voiceService.speak('Opening module.');
-          if (mounted) {
+          if (mounted && _isCurrentRoute) {
             await _navigateToModule(route);
           }
         }
       } else {
-        await voiceService.speak('Command not recognized. Tap the voice button, say VisionMate, or say Guide for help.');
-        if (mounted) {
+        await voiceService.speak(
+          'Command not recognized. Tap the voice button, say VisionMate, or say Guide for help.',
+          awaitCompletion: true,
+        );
+        if (mounted && _isCurrentRoute) {
           setState(() {
-            status = 'Command not recognized. Tap microphone button to speak.';
+            status = 'Command not recognized. Reactivating microphone...';
+          });
+          _retryTimer?.cancel();
+          _retryTimer = Timer(const Duration(milliseconds: 500), () {
+            if (mounted && _isCurrentRoute) {
+              _activateVoiceRecognition();
+            }
           });
         }
       }
     } else {
-      setState(() {
-        status = 'No voice input detected. Say "VisionMate" or tap button to speak.';
-      });
+      if (mounted && _isCurrentRoute) {
+        setState(() {
+          status = 'No voice input detected. Reactivating microphone...';
+        });
+        _retryTimer?.cancel();
+        _retryTimer = Timer(const Duration(milliseconds: 500), () {
+          if (mounted && _isCurrentRoute) {
+            _activateVoiceRecognition();
+          }
+        });
+      }
     }
   }
 

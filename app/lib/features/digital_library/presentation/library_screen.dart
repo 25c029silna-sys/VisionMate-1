@@ -27,7 +27,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
   bool isSearching = false;
   bool isLoadingBooks = false;
   String selectedFilter = 'all'; // 'all', 'notes', 'search'
-  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -429,12 +428,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _searchLibrary() async {
-    _retryTimer?.cancel();
     if (isSearching) {
       await voiceService.stopListening();
       if (mounted) {
         setState(() {
           isSearching = false;
+          status = 'Voice search paused. Tap button to speak.';
         });
       }
       return;
@@ -453,7 +452,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (mounted) {
         setState(() {
           isSearching = false;
-          status = 'No query heard. Tap Voice Search button to speak a query.';
+          status = 'Voice search ready. Tap microphone or speak a search query.';
         });
       }
       return;
@@ -821,7 +820,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   void dispose() {
-    _retryTimer?.cancel();
     super.dispose();
   }
 

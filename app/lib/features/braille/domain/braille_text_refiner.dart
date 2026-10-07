@@ -31,8 +31,8 @@ class BrailleTextRefiner {
       },
     );
 
-    // 2. Separate common Braille conjunction contractions attached to words:
-    // e.g. "lifeand" -> "life and", "islandfor" -> "island for", "withthe" -> "with the"
+    // 2. Separate common Braille conjunction contractions & word attachments:
+    // e.g. "lifeand" -> "life and", "islandfor" -> "island for", "withthe" -> "with the", "amhappy" -> "am happy"
     text = text.replaceAllMapped(
       RegExp(r'\b([a-zA-Z]{3,})(and|with|for|the|of)\b', caseSensitive: false),
       (m) => '${m.group(1)} ${m.group(2)}',
@@ -41,9 +41,14 @@ class BrailleTextRefiner {
       RegExp(r'\b(and|with|for|the|of)([a-zA-Z]{3,})\b', caseSensitive: false),
       (m) => '${m.group(1)} ${m.group(2)}',
     );
+    text = text.replaceAllMapped(
+      RegExp(r'\b(am|is|are|was|were)(happy|reading|hot|big|small|blue|good|ready)\b', caseSensitive: false),
+      (m) => '${m.group(1)} ${m.group(2)}',
+    );
 
     // 3. Clean up common Braille OCR substitution artifacts
     text = text.replaceAll('*', 'in');
+    text = text.replaceAll(RegExp(r'\b;his\b', caseSensitive: false), 'this');
 
     // 4. Expand Grade 2 short-forms and context-guarded single-letter words
     final lines = text.split('\n');
@@ -57,6 +62,12 @@ class BrailleTextRefiner {
       if (RegExp(r"^[^a-zA-Z0-9]*[a-zA-Z]?[^a-zA-Z0-9]*$").hasMatch(line)) {
         continue;
       }
+
+      // Discard lines with 3 or more identical characters in a row (e.g. "cccc")
+      if (RegExp(r'([a-zA-Z])\1{2,}').hasMatch(line)) continue;
+
+      // Discard repetitive punctuation/character noise (e.g. "c-:c-:c-:")
+      if (RegExp(r'(?:[a-zA-Z][\-:;?,\.!]){3,}').hasMatch(line)) continue;
 
       final words = line.split(RegExp(r'\s+'));
       final assembledLine = words.join(' ').trim();

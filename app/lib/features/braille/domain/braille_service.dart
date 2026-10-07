@@ -361,7 +361,18 @@ class BrailleService {
       '101000': 'k', '111000': 'l', '101100': 'm', '101110': 'n', '101010': 'o',
       '111100': 'p', '111110': 'q', '111010': 'r', '011100': 's', '011110': 't',
       '101001': 'u', '111001': 'v', '010111': 'w', '101101': 'x', '101111': 'y',
-      '101011': 'z', '001111': '#', '000001': ',',
+      '101011': 'z',
+      // Punctuation and indicators
+      '010000': ',', // Dot 2 (comma)
+      '011000': ';', // Dots 2,3 (semicolon)
+      '010010': ':', // Dots 2,5 (colon)
+      '010011': '.', // Dots 2,5,6 (period)
+      '011010': '!', // Dots 2,3,5 (exclamation)
+      '011001': '?', // Dots 2,3,6 (question)
+      '001000': '\'', // Dot 3 (apostrophe)
+      '001001': '-', // Dots 3,6 (hyphen)
+      '001111': '#', // Dots 3,4,5,6 (number indicator)
+      '000001': '^', // Dot 6 (capital indicator)
     };
 
     return map[pattern] ?? '?';
@@ -371,6 +382,7 @@ class BrailleService {
     final buffer = StringBuffer();
     bool isNumberMode = false;
     bool isCapitalMode = false;
+    bool isCapitalLock = false;
 
     final numberMap = {
       'a': '1', 'b': '2', 'c': '3', 'd': '4', 'e': '5',
@@ -388,6 +400,7 @@ class BrailleService {
       if (cell.isEmpty) {
         isNumberMode = false;
         isCapitalMode = false;
+        isCapitalLock = false;
         buffer.write(' ');
         continue;
       }
@@ -398,13 +411,19 @@ class BrailleService {
         isNumberMode = true;
         continue;
       }
-      if (rawChar == ',') {
-        isCapitalMode = true;
+      if (rawChar == '^') {
+        // Dot 6 capital indicator: single '^' capitalizes next letter, double '^^' locks all caps
+        if (isCapitalMode) {
+          isCapitalLock = true;
+        } else {
+          isCapitalMode = true;
+        }
         continue;
       }
       if (rawChar == ' ') {
         isNumberMode = false;
         isCapitalMode = false;
+        isCapitalLock = false;
         buffer.write(' ');
         continue;
       }
@@ -412,9 +431,11 @@ class BrailleService {
       String charToWrite = rawChar;
       if (isNumberMode && numberMap.containsKey(rawChar)) {
         charToWrite = numberMap[rawChar]!;
-      } else if (isCapitalMode) {
+      } else if (isCapitalLock || isCapitalMode) {
         charToWrite = rawChar.toUpperCase();
-        isCapitalMode = false;
+        if (!isCapitalLock) {
+          isCapitalMode = false;
+        }
       }
 
       buffer.write(charToWrite);

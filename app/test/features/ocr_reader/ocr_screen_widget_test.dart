@@ -33,6 +33,10 @@ void main() {
     when(() => mockVoiceService.speak(any())).thenAnswer((_) async {});
     when(() => mockVoiceService.listen()).thenAnswer((_) async => null);
     when(() => mockVoiceService.listen(listenDurationSeconds: any(named: 'listenDurationSeconds'))).thenAnswer((_) async => null);
+    when(() => mockVoiceService.listen(
+      listenDurationSeconds: any(named: 'listenDurationSeconds'),
+      pauseDurationSeconds: any(named: 'pauseDurationSeconds'),
+    )).thenAnswer((_) async => null);
     when(() => mockPermissionService.requestCameraPermission()).thenAnswer((_) async => true);
     when(() => mockCameraService.initCamera(resolution: any(named: 'resolution'))).thenAnswer((_) async => true);
     when(() => mockCameraService.isInitialized).thenReturn(true);

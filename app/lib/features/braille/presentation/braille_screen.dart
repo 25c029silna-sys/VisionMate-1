@@ -27,13 +27,14 @@ class _BrailleScreenState extends State<BrailleScreen> {
   late final CameraService cameraService;
   
   String result = 'Position camera over Braille page and tap Scan Braille or say Scan.';
+  String _extractedText = '';
+  bool _hasRecognizedText = false;
   bool isScanning = false;
   bool isCameraReady = false;
   bool isFlashOn = false;
   bool isMaximizedCamera = false;
   bool isExportingPdf = false;
   bool isListening = false;
-  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -51,7 +52,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
         isCameraReady = ready;
       });
     }
-    await voiceService.speak('Braille recognition activated. Align page within frame and tap screen or say scan.');
+    await voiceService.speak('Braille recognition activated. Align page within frame and tap screen or say scan.', awaitCompletion: true);
     if (mounted) {
       await _handleVoiceCommand();
     }
@@ -85,7 +86,6 @@ class _BrailleScreenState extends State<BrailleScreen> {
   }
 
   Future<void> _handleVoiceCommand() async {
-    _retryTimer?.cancel();
     if (isListening) {
       await voiceService.stopListening();
       if (mounted) {
@@ -109,7 +109,9 @@ class _BrailleScreenState extends State<BrailleScreen> {
       isListening = false;
     });
 
-    if (command == null || command.trim().isEmpty) return;
+    if (command == null || command.trim().isEmpty) {
+      return;
+    }
 
     await _handleVoiceCommandWithUtterance(command);
   }
@@ -132,9 +134,10 @@ class _BrailleScreenState extends State<BrailleScreen> {
         await _promptAndExportPdf();
       }
     } else if (lower.contains('repeat') || lower.contains('again')) {
-      if (result.isNotEmpty) {
-        await voiceService.speak('Current Braille text: $result', awaitCompletion: true);
-        if (mounted) await _promptPostProcessOptions();
+      if (_hasRecognizedText && _extractedText.isNotEmpty) {
+        await voiceService.speak('Current Braille text: $_extractedText', awaitCompletion: true);
+      } else {
+        await voiceService.speak('No Braille text scanned yet.');
       }
     } else if (VoicePostProcessHelper.isHomeOrExit(lower)) {
       await voiceService.speak('Returning to main menu.');
@@ -142,48 +145,19 @@ class _BrailleScreenState extends State<BrailleScreen> {
     } else if (lower.contains('help') || lower.contains('guide')) {
       await voiceService.speak('Available commands: say Scan to read Braille, Flash to toggle flashlight, Expand to enlarge camera area, Save PDF as with your chosen document name, Repeat to hear again, or Back to return home.');
     } else {
-      await voiceService.speak('Command not recognized. Say Scan, Flash, Expand, Save PDF, or Back.');
-      if (mounted) {
-        setState(() {
-          result = 'Tap microphone button to speak a command.';
-        });
-      }
-    }
-  }
-
-  Future<void> _promptPostProcessOptions() async {
-    if (!mounted) return;
-    await voiceService.speak(
-      'Say again to scan another page, say save PDF to export, or say home to return to the main menu.',
-      awaitCompletion: true,
-    );
-    if (!mounted) return;
-    setState(() => isListening = true);
-    final response = await voiceService.listen(listenDurationSeconds: 15, pauseDurationSeconds: 4);
-    if (!mounted) return;
-    setState(() => isListening = false);
-
-    if (response == null || response.trim().isEmpty) {
-      if (mounted) {
-        setState(() {
-          result = 'Tap microphone button to speak a command.';
-        });
-      }
-      return;
-    }
-
-    if (VoicePostProcessHelper.isRepeatOrAgain(response)) {
-      await _scanBraille();
-    } else if (VoicePostProcessHelper.isHomeOrExit(response)) {
-      await voiceService.speak('Returning to main menu.');
-      if (mounted) Navigator.pop(context);
-    } else {
-      await _handleVoiceCommandWithUtterance(response);
+      await voiceService.speak(
+        'Command not recognized. Say Scan, Flash, Expand, Save PDF, or Back.',
+        awaitCompletion: true,
+      );
     }
   }
 
   Future<void> _scanBraille() async {
     if (isScanning) return;
+    if (isListening) {
+      await voiceService.stopListening();
+      if (mounted) setState(() => isListening = false);
+    }
 
     setState(() {
       isScanning = true;
@@ -206,6 +180,8 @@ class _BrailleScreenState extends State<BrailleScreen> {
         if (!mounted) return;
         setState(() {
           result = errorMsg;
+          _extractedText = '';
+          _hasRecognizedText = false;
           isScanning = false;
         });
         await voiceService.speak(errorMsg);
@@ -225,23 +201,41 @@ class _BrailleScreenState extends State<BrailleScreen> {
         const errorMsg = "The trained Braille model file is currently unavailable. Operating in standard cell detection mode.";
         setState(() {
           result = errorMsg;
+          _extractedText = '';
+          _hasRecognizedText = false;
           isScanning = false;
         });
         await voiceService.speak(errorMsg);
         return;
       }
 
+      if (!scanResult.hasContent ||
+          extracted.contains('No Braille text detected') ||
+          extracted.contains('Position camera') ||
+          extracted.trim().isEmpty) {
+        setState(() {
+          result = 'No Braille text detected. Please align camera over a Braille page.';
+          _extractedText = '';
+          _hasRecognizedText = false;
+          isScanning = false;
+        });
+        await voiceService.speak('No Braille text detected. Please align camera over a Braille page and tap scan.');
+        return;
+      }
+
       setState(() {
         result = extracted;
+        _extractedText = extracted;
+        _hasRecognizedText = true;
         isScanning = false;
-        if (isMaximizedCamera && !extracted.contains('No Braille text detected')) {
+        if (isMaximizedCamera) {
           isMaximizedCamera = false;
         }
       });
 
       await voiceService.speak('Braille recognition complete. Recognized text: $extracted', awaitCompletion: true);
       if (mounted) {
-        await _promptPostProcessOptions();
+        await _promptAndExportPdf();
       }
     } catch (e, stack) {
       debugPrint('BrailleScreen scanning error: $e\n$stack');
@@ -249,6 +243,8 @@ class _BrailleScreenState extends State<BrailleScreen> {
       const errorMsg = 'An error occurred while scanning the Braille page. Please try again.';
       setState(() {
         result = errorMsg;
+        _extractedText = '';
+        _hasRecognizedText = false;
         isScanning = false;
       });
       await voiceService.speak(errorMsg);
@@ -256,11 +252,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
   }
 
   Future<void> _promptAndExportPdf() async {
-    if (result.trim().isEmpty ||
-        result.contains('Position camera') ||
-        result.contains('Processing') ||
-        result.contains('isn\'t available') ||
-        result.contains('No Braille text detected')) {
+    if (!_hasRecognizedText || _extractedText.trim().isEmpty) {
       await voiceService.speak('No recognized Braille text available to export.');
       return;
     }
@@ -276,11 +268,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
   }
 
   Future<void> _exportToPdf({String? customName}) async {
-    if (result.trim().isEmpty ||
-        result.contains('Position camera') ||
-        result.contains('Processing') ||
-        result.contains('isn\'t available') ||
-        result.contains('No Braille text detected')) {
+    if (!_hasRecognizedText || _extractedText.trim().isEmpty) {
       await voiceService.speak('No recognized Braille text available to export.');
       return;
     }
@@ -299,7 +287,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
 
       await voiceService.speak('Saving PDF as $docTitle.');
 
-      final pdfFile = await brailleService.exportBrailleTextToPdf(result, title: docTitle);
+      final pdfFile = await brailleService.exportBrailleTextToPdf(_extractedText, title: docTitle);
       
       if (!mounted) return;
 
@@ -307,7 +295,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
       try {
         final storage = Provider.of<StorageService>(context, listen: false);
         final libraryService = LibraryService(EmbeddingStore(storage));
-        await libraryService.addAndIndexDocument(docTitle, result, sourceType: 'braille_pdf');
+        await libraryService.addAndIndexDocument(docTitle, _extractedText, sourceType: 'braille_pdf');
       } catch (storageErr) {
         debugPrint('BrailleScreen: Storage indexing note: $storageErr');
       }
@@ -343,7 +331,6 @@ class _BrailleScreenState extends State<BrailleScreen> {
 
   @override
   void dispose() {
-    _retryTimer?.cancel();
     if (isFlashOn) {
       cameraService.toggleFlash(false);
     }
@@ -356,10 +343,7 @@ class _BrailleScreenState extends State<BrailleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final hasRecognizedText = result.isNotEmpty &&
-        !result.contains('Position camera') &&
-        !result.contains('Processing') &&
-        !result.contains('isn\'t available');
+    final hasRecognizedText = _hasRecognizedText;
 
     return Scaffold(
       appBar: AppBar(

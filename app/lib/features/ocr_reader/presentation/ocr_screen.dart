@@ -37,7 +37,6 @@ class _OcrScreenState extends State<OcrScreen> {
   bool isScanning = false;
   bool isFlashOn = false;
   bool isListening = false;
-  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -70,6 +69,7 @@ class _OcrScreenState extends State<OcrScreen> {
 
       await voiceService.speak(
         'OCR reader activated. Point your camera at the text and say capture or tap to scan.',
+        awaitCompletion: true,
       );
       if (mounted) {
         await _handleVoiceCommand();
@@ -94,12 +94,12 @@ class _OcrScreenState extends State<OcrScreen> {
   }
 
   Future<void> _handleVoiceCommand() async {
-    _retryTimer?.cancel();
     if (isListening) {
       await voiceService.stopListening();
       if (mounted) {
         setState(() {
           isListening = false;
+          status = 'Voice listening paused. Tap microphone button to speak.';
         });
       }
       return;
@@ -108,6 +108,7 @@ class _OcrScreenState extends State<OcrScreen> {
     if (mounted) {
       setState(() {
         isListening = true;
+        status = 'Listening for voice command... Speak now.';
       });
     }
 
@@ -118,7 +119,14 @@ class _OcrScreenState extends State<OcrScreen> {
       isListening = false;
     });
 
-    if (command == null || command.trim().isEmpty) return;
+    if (command == null || command.trim().isEmpty) {
+      if (mounted) {
+        setState(() {
+          status = 'Voice command ready. Tap microphone or say Capture.';
+        });
+      }
+      return;
+    }
 
     await _handleVoiceCommandWithUtterance(command);
   }
@@ -144,10 +152,13 @@ class _OcrScreenState extends State<OcrScreen> {
     } else if (lower.contains('help') || lower.contains('guide')) {
       await voiceService.speak('Available commands: say Capture to scan text, Repeat to hear text again, Flash to toggle flashlight, or Back to exit.');
     } else {
-      await voiceService.speak('Command not recognized. Say Capture, Repeat, Flash, or Back.');
+      await voiceService.speak(
+        'Command not recognized. Say Capture, Repeat, Flash, or Back.',
+        awaitCompletion: true,
+      );
       if (mounted) {
         setState(() {
-          status = 'Tap microphone button to speak a command.';
+          status = 'Command not recognized. Tap microphone to speak.';
         });
       }
     }
@@ -155,6 +166,10 @@ class _OcrScreenState extends State<OcrScreen> {
 
   Future<void> _processScan() async {
     if (isScanning) return;
+    if (isListening) {
+      await voiceService.stopListening();
+      if (mounted) setState(() => isListening = false);
+    }
     setState(() {
       isScanning = true;
       status = 'Scanning text. Please hold camera steady...';
@@ -206,9 +221,6 @@ class _OcrScreenState extends State<OcrScreen> {
         status = msg;
       });
       await voiceService.speak(msg, awaitCompletion: true);
-      if (mounted) {
-        await _promptPostProcessOptions();
-      }
       return;
     }
 
@@ -236,11 +248,6 @@ class _OcrScreenState extends State<OcrScreen> {
     setState(() => isListening = false);
 
     if (response == null || response.trim().isEmpty) {
-      if (mounted) {
-        setState(() {
-          status = 'Tap microphone button to speak a command.';
-        });
-      }
       return;
     }
 
@@ -256,7 +263,6 @@ class _OcrScreenState extends State<OcrScreen> {
 
   @override
   void dispose() {
-    _retryTimer?.cancel();
     if (isFlashOn) {
       cameraService.toggleFlash(false);
     }

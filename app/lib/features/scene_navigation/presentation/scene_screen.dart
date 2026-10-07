@@ -36,7 +36,6 @@ class _SceneScreenState extends State<SceneScreen> {
   bool isAnalyzing = false;
   bool isFlashOn = false;
   bool isListening = false;
-  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -69,6 +68,7 @@ class _SceneScreenState extends State<SceneScreen> {
 
       await voiceService.speak(
         'Scene description activated. Point camera at surroundings and tap Describe Surroundings or say describe surroundings.',
+        awaitCompletion: true,
       );
       if (mounted) {
         await _handleVoiceCommand();
@@ -93,12 +93,12 @@ class _SceneScreenState extends State<SceneScreen> {
   }
 
   Future<void> _handleVoiceCommand() async {
-    _retryTimer?.cancel();
     if (isListening) {
       await voiceService.stopListening();
       if (mounted) {
         setState(() {
           isListening = false;
+          result = 'Voice listening paused. Tap microphone button to speak.';
         });
       }
       return;
@@ -107,6 +107,7 @@ class _SceneScreenState extends State<SceneScreen> {
     if (mounted) {
       setState(() {
         isListening = true;
+        result = 'Listening for voice command... Speak now.';
       });
     }
 
@@ -120,7 +121,7 @@ class _SceneScreenState extends State<SceneScreen> {
     if (command == null || command.trim().isEmpty) {
       if (mounted) {
         setState(() {
-          result = 'Tap microphone button to speak a command.';
+          result = 'Voice command ready. Tap microphone or say Describe.';
         });
       }
       return;
@@ -148,10 +149,13 @@ class _SceneScreenState extends State<SceneScreen> {
     } else if (lower.contains('help') || lower.contains('guide')) {
       await voiceService.speak('Available commands: say Describe to analyze surroundings, Repeat to hear again, Flash to toggle flashlight, or Back to exit.');
     } else {
-      await voiceService.speak('Command not recognized. Say Describe, Repeat, Flash, or Back.');
+      await voiceService.speak(
+        'Command not recognized. Say Describe, Repeat, Flash, or Back.',
+        awaitCompletion: true,
+      );
       if (mounted) {
         setState(() {
-          result = 'Tap microphone button to speak a command.';
+          result = 'Command not recognized. Tap microphone to speak.';
         });
       }
     }
@@ -159,6 +163,10 @@ class _SceneScreenState extends State<SceneScreen> {
 
   Future<void> _describeScene() async {
     if (isAnalyzing) return;
+    if (isListening) {
+      await voiceService.stopListening();
+      if (mounted) setState(() => isListening = false);
+    }
 
     setState(() {
       isAnalyzing = true;
@@ -188,9 +196,6 @@ class _SceneScreenState extends State<SceneScreen> {
         result = errorMsg;
       });
       await voiceService.speak(errorMsg, awaitCompletion: true);
-      if (mounted) {
-        await _promptPostProcessOptions();
-      }
       return;
     }
 
@@ -216,11 +221,6 @@ class _SceneScreenState extends State<SceneScreen> {
     setState(() => isListening = false);
 
     if (response == null || response.trim().isEmpty) {
-      if (mounted) {
-        setState(() {
-          result = 'Tap microphone button to speak a command.';
-        });
-      }
       return;
     }
 
@@ -236,7 +236,6 @@ class _SceneScreenState extends State<SceneScreen> {
 
   @override
   void dispose() {
-    _retryTimer?.cancel();
     if (isFlashOn) {
       cameraService.toggleFlash(false);
     }
